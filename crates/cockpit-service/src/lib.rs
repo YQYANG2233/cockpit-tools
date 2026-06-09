@@ -2220,60 +2220,6 @@ fn delete_webdav_backup_file(params: &Value) -> Result<(), String> {
     let file_name = param_string(params, &["fileName", "file_name"])?;
     block_on(cockpit_core::modules::auto_backup::delete_webdav_backup_file(&file_name))
 }
-fn load_instance_store_by_platform(
-    platform: &str,
-) -> Result<cockpit_core::models::InstanceStore, String> {
-    match platform {
-        "antigravity" => cockpit_core::modules::instance::load_instance_store(),
-        "codex" => cockpit_core::modules::codex_instance::load_instance_store(),
-        "github-copilot" => cockpit_core::modules::github_copilot_instance::load_instance_store(),
-        "windsurf" => cockpit_core::modules::windsurf_instance::load_instance_store(),
-        "kiro" => cockpit_core::modules::kiro_instance::load_instance_store(),
-        "cursor" => cockpit_core::modules::cursor_instance::load_instance_store(),
-        "gemini" => cockpit_core::modules::gemini_instance::load_instance_store(),
-        "codebuddy" => cockpit_core::modules::codebuddy_instance::load_instance_store(),
-        "codebuddy_cn" => cockpit_core::modules::codebuddy_cn_instance::load_instance_store(),
-        "qoder" => cockpit_core::modules::qoder_instance::load_instance_store(),
-        "trae" => cockpit_core::modules::trae_instance::load_instance_store(),
-        "workbuddy" => cockpit_core::modules::workbuddy_instance::load_instance_store(),
-        _ => Err(format!("unsupported instance platform: {platform}")),
-    }
-}
-
-fn save_instance_store_by_platform(
-    platform: &str,
-    store: &cockpit_core::models::InstanceStore,
-) -> Result<(), String> {
-    match platform {
-        "antigravity" => cockpit_core::modules::instance::save_instance_store(store),
-        "codex" => cockpit_core::modules::codex_instance::save_instance_store(store),
-        "github-copilot" => {
-            cockpit_core::modules::github_copilot_instance::save_instance_store(store)
-        }
-        "windsurf" => cockpit_core::modules::windsurf_instance::save_instance_store(store),
-        "kiro" => cockpit_core::modules::kiro_instance::save_instance_store(store),
-        "cursor" => cockpit_core::modules::cursor_instance::save_instance_store(store),
-        "gemini" => cockpit_core::modules::gemini_instance::save_instance_store(store),
-        "codebuddy" => cockpit_core::modules::codebuddy_instance::save_instance_store(store),
-        "codebuddy_cn" => cockpit_core::modules::codebuddy_cn_instance::save_instance_store(store),
-        "qoder" => cockpit_core::modules::qoder_instance::save_instance_store(store),
-        "trae" => cockpit_core::modules::trae_instance::save_instance_store(store),
-        "workbuddy" => cockpit_core::modules::workbuddy_instance::save_instance_store(store),
-        _ => Err(format!("unsupported instance platform: {platform}")),
-    }
-}
-
-fn sanitize_instance_store(
-    store: &cockpit_core::models::InstanceStore,
-) -> cockpit_core::models::InstanceStore {
-    let mut next = store.clone();
-    next.default_settings.last_pid = None;
-    for instance in &mut next.instances {
-        instance.last_pid = None;
-        instance.last_launched_at = None;
-    }
-    next
-}
 
 fn data_transfer_apply_user_config(params: &Value) -> Result<bool, String> {
     let payload = params
@@ -2281,38 +2227,24 @@ fn data_transfer_apply_user_config(params: &Value) -> Result<bool, String> {
         .and_then(|params| params.get("config"))
         .cloned()
         .unwrap_or_else(|| params.clone());
-    let mut next_config: cockpit_core::modules::config::UserConfig =
+    let imported_config: cockpit_core::modules::config::UserConfig =
         serde_json::from_value(payload).map_err(|err| format!("invalid user config: {err}"))?;
     let current = cockpit_core::modules::config::get_user_config();
+    let current_app_auto_launch_enabled = current.app_auto_launch_enabled;
 
-    next_config.webdav_sync_enabled = current.webdav_sync_enabled;
-    next_config.webdav_sync_url = current.webdav_sync_url.clone();
-    next_config.webdav_sync_username = current.webdav_sync_username.clone();
-    next_config.webdav_sync_password = current.webdav_sync_password.clone();
-    next_config.webdav_sync_remote_dir = current.webdav_sync_remote_dir.clone();
-    next_config.webdav_sync_retention_days = current.webdav_sync_retention_days;
-    next_config.webdav_sync_last_upload_at = current.webdav_sync_last_upload_at.clone();
-    next_config.webdav_sync_last_upload_file_name =
-        current.webdav_sync_last_upload_file_name.clone();
-    next_config.webdav_sync_last_download_at = current.webdav_sync_last_download_at.clone();
-    next_config.webdav_sync_last_download_file_name =
-        current.webdav_sync_last_download_file_name.clone();
-
-    let needs_restart = current.ws_port != next_config.ws_port
-        || current.ws_enabled != next_config.ws_enabled
-        || current.report_enabled != next_config.report_enabled
-        || current.report_port != next_config.report_port
-        || current.report_token != next_config.report_token;
-
-    cockpit_core::modules::config::save_user_config(&next_config)?;
-    Ok(needs_restart)
+    let applied = cockpit_core::modules::data_transfer::apply_user_config(
+        current,
+        imported_config,
+        current_app_auto_launch_enabled,
+    )?;
+    Ok(applied.needs_restart)
 }
 
 fn data_transfer_get_instance_store(
     params: &Value,
 ) -> Result<cockpit_core::models::InstanceStore, String> {
     let platform = param_string(params, &["platform"])?;
-    load_instance_store_by_platform(platform.trim())
+    cockpit_core::modules::data_transfer::load_instance_store_by_platform(platform.trim())
 }
 
 fn data_transfer_replace_instance_store(params: &Value) -> Result<(), String> {
@@ -2324,8 +2256,7 @@ fn data_transfer_replace_instance_store(params: &Value) -> Result<(), String> {
         .ok_or_else(|| "missing instance store".to_string())?;
     let store: cockpit_core::models::InstanceStore = serde_json::from_value(store_value)
         .map_err(|err| format!("invalid instance store: {err}"))?;
-    let sanitized = sanitize_instance_store(&store);
-    save_instance_store_by_platform(platform.trim(), &sanitized)
+    cockpit_core::modules::data_transfer::replace_instance_store(platform.trim(), &store)
 }
 
 fn save_text_file(params: &Value) -> Result<(), String> {
