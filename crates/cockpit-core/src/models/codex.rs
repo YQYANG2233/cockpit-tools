@@ -48,7 +48,7 @@ pub struct CodexQuickConfig {
     pub detected_auto_compact_token_limit: Option<i64>,
 }
 
-/// Codex 账号数据结构
+/// Codex 官方 App 推理速度
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CodexAppSpeed {
@@ -62,6 +62,7 @@ impl Default for CodexAppSpeed {
     }
 }
 
+/// Codex 官方 App 推理速度配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodexAppSpeedConfig {
@@ -69,6 +70,7 @@ pub struct CodexAppSpeedConfig {
     pub global_state_path: String,
 }
 
+/// Codex 账号数据结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexAccount {
     pub id: String,
@@ -273,6 +275,13 @@ pub struct CodexJwtPayload {
     pub profile_data: Option<CodexProfileData>,
 }
 
+/// JWT 中的 profile 数据
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexProfileData {
+    pub email: Option<String>,
+    pub email_verified: Option<bool>,
+}
+
 /// JWT 中的 auth 数据
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexAuthData {
@@ -281,12 +290,6 @@ pub struct CodexAuthData {
     pub chatgpt_subscription_active_until: Option<serde_json::Value>,
     pub account_id: Option<String>,
     pub organization_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CodexProfileData {
-    pub email: Option<String>,
-    pub email_verified: Option<bool>,
 }
 
 impl CodexAccount {
