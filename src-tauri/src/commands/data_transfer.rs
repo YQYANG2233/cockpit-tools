@@ -90,9 +90,11 @@ pub fn data_transfer_apply_user_config(
     next_config.webdav_sync_remote_dir = current.webdav_sync_remote_dir.clone();
     next_config.webdav_sync_retention_days = current.webdav_sync_retention_days;
     next_config.webdav_sync_last_upload_at = current.webdav_sync_last_upload_at.clone();
-    next_config.webdav_sync_last_upload_file_name = current.webdav_sync_last_upload_file_name.clone();
+    next_config.webdav_sync_last_upload_file_name =
+        current.webdav_sync_last_upload_file_name.clone();
     next_config.webdav_sync_last_download_at = current.webdav_sync_last_download_at.clone();
-    next_config.webdav_sync_last_download_file_name = current.webdav_sync_last_download_file_name.clone();
+    next_config.webdav_sync_last_download_file_name =
+        current.webdav_sync_last_download_file_name.clone();
     let current_app_auto_launch_enabled =
         get_app_auto_launch_enabled(&app).unwrap_or(current.app_auto_launch_enabled);
 

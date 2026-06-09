@@ -1,5 +1,5 @@
 use crate::modules;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 #[tauri::command]
 pub fn wakeup_ensure_runtime_ready(
@@ -99,19 +99,21 @@ pub fn wakeup_release_scope(cancel_scope_id: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn wakeup_verification_load_state(
-) -> Result<Vec<modules::wakeup_verification::WakeupVerificationStateItem>, String> {
-    modules::wakeup_verification::build_display_state_for_all_accounts()
+) -> Result<Vec<cockpit_core::modules::wakeup_verification::WakeupVerificationStateItem>, String> {
+    cockpit_core::modules::wakeup_verification::build_display_state_for_all_accounts()
 }
 
 #[tauri::command]
-pub fn wakeup_verification_load_history(
-) -> Result<Vec<modules::wakeup_verification::WakeupVerificationBatchHistoryItem>, String> {
-    modules::wakeup_verification::load_history()
+pub fn wakeup_verification_load_history() -> Result<
+    Vec<cockpit_core::modules::wakeup_verification::WakeupVerificationBatchHistoryItem>,
+    String,
+> {
+    cockpit_core::modules::wakeup_verification::load_history()
 }
 
 #[tauri::command]
 pub fn wakeup_verification_delete_history(batch_ids: Vec<String>) -> Result<usize, String> {
-    modules::wakeup_verification::delete_history(batch_ids)
+    cockpit_core::modules::wakeup_verification::delete_history(batch_ids)
 }
 
 #[tauri::command]
@@ -122,12 +124,20 @@ pub async fn wakeup_verification_run_batch(
     prompt: Option<String>,
     max_output_tokens: Option<u32>,
     official_ls_version_mode: Option<String>,
-) -> Result<modules::wakeup_verification::WakeupVerificationBatchResult, String> {
+) -> Result<cockpit_core::modules::wakeup_verification::WakeupVerificationBatchResult, String> {
     let final_prompt = prompt.unwrap_or_else(|| "hi".to_string());
     let final_tokens = max_output_tokens.unwrap_or(0);
     modules::wakeup::set_official_ls_version_mode(official_ls_version_mode.as_deref())?;
-    modules::wakeup_verification::run_batch(&app, account_ids, &model, &final_prompt, final_tokens)
-        .await
+    cockpit_core::modules::wakeup_verification::run_batch(
+        account_ids,
+        &model,
+        &final_prompt,
+        final_tokens,
+        |payload| {
+            let _ = app.emit("wakeup://verification-progress", payload);
+        },
+    )
+    .await
 }
 
 #[tauri::command]

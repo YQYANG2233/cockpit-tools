@@ -1,10 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { openUrl } from '@tauri-apps/plugin-opener';
-import { open } from '@tauri-apps/plugin-dialog';
-import { invoke } from '@tauri-apps/api/core';
-import { getVersion } from '@tauri-apps/api/app';
-import { getCurrentWebview } from '@tauri-apps/api/webview';
+import { openUrl } from '../lib/runtime/opener';
+import { open } from '../lib/runtime/dialog';
+import { invoke } from '../lib/runtime/invoke';
+import { getVersion } from '../lib/runtime/app';
+import { getCurrentWebview } from '../lib/runtime/window';
 import { changeLanguage, getCurrentLanguage, normalizeLanguage } from '../i18n';
 import * as accountService from '../services/accountService';
 import * as codexService from '../services/codexService';

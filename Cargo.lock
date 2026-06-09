@@ -757,11 +757,13 @@ dependencies = [
  "log",
  "mac-notification-sys",
  "md5",
+ "minisign-verify",
  "pbkdf2",
  "rand 0.8.5",
  "rcgen",
  "regex",
  "reqwest 0.12.28",
+ "reqwest_dav",
  "rsa",
  "rusqlite",
  "rustls",
@@ -791,6 +793,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "cockpit-service"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "cockpit-core",
+ "dirs 5.0.1",
+ "log",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tiny_http",
+ "tokio",
+ "toml_edit 0.20.2",
+ "url",
+ "urlencoding",
+ "uuid",
+]
+
+[[package]]
 name = "cockpit-tools"
 version = "0.25.5"
 dependencies = [
@@ -800,6 +821,8 @@ dependencies = [
  "base64 0.22.1",
  "cbc",
  "chrono",
+ "cockpit-core",
+ "cockpit-service",
  "dirs 5.0.1",
  "futures",
  "futures-util",
@@ -807,7 +830,6 @@ dependencies = [
  "libc",
  "mac-notification-sys",
  "md5",
- "minisign-verify",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
@@ -855,6 +877,19 @@ dependencies = [
  "urlencoding",
  "uuid",
  "windows 0.58.0",
+]
+
+[[package]]
+name = "cockpit-web"
+version = "0.1.0"
+dependencies = [
+ "cockpit-service",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "sha2",
+ "tiny_http",
 ]
 
 [[package]]
@@ -4372,6 +4407,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "encoding_rs",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "h2",

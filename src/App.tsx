@@ -8,12 +8,11 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import './App.css';
-import { getVersion } from '@tauri-apps/api/app';
-import { getCurrentWindow } from '@tauri-apps/api/window';
-import { getCurrentWebview } from '@tauri-apps/api/webview';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
+import { getVersion } from './lib/runtime/app';
+import { getCurrentWebview, getCurrentWindow } from './lib/runtime/window';
+import { listen, UnlistenFn } from './lib/runtime/events';
+import { invoke } from './lib/runtime/invoke';
+import { open } from './lib/runtime/dialog';
 import { useTranslation } from 'react-i18next';
 import { FileText, FolderOpen, RefreshCw, X } from 'lucide-react';
 import { SideNav } from './components/layout/SideNav';
@@ -43,7 +42,8 @@ import { usePlatformLayoutStore } from './stores/usePlatformLayoutStore';
 import { useTopRightAdStore } from './stores/useTopRightAdStore';
 import { useSponsorStore } from './stores/useSponsorStore';
 import type { UpdateCheckResult, UpdateInfo } from './components/UpdateNotification';
-import type { Update as UpdaterUpdate } from '@tauri-apps/plugin-updater';
+import { check as updaterCheck, type Update as UpdaterUpdate } from './lib/runtime/updater';
+import { relaunch } from './lib/runtime/process';
 import { parseUpdaterReleaseNotes, resolveUpdaterDownloadUrl } from './utils/updaterReleaseNotes';
 import { FloatingCardWindow } from './pages/FloatingCardWindow';
 import { initWakeupNotificationListener } from './utils/wakeupNotificationListener';
@@ -953,9 +953,8 @@ function MainApp() {
   }, [updateRuntimeInfo]);
 
   const runUpdaterCheck = useCallback(async () => {
-    const { check } = await import('@tauri-apps/plugin-updater');
     const target = getUpdaterCheckTarget();
-    return target ? check({ target }) : check();
+    return target ? updaterCheck({ target }) : updaterCheck();
   }, [getUpdaterCheckTarget]);
 
   const closeUpdaterHandle = useCallback(async (handle: UpdaterUpdate | null | undefined) => {
@@ -1103,7 +1102,6 @@ function MainApp() {
         requiresInstall: false,
       });
       failureStage = 'relaunch';
-      const { relaunch } = await import('@tauri-apps/plugin-process');
       await relaunch();
     } catch (error) {
       await restoreCodexLocalAccessAfterRelaunchFailure();
@@ -1170,7 +1168,6 @@ function MainApp() {
       try {
         await prepareCodexLocalAccessBeforeRelaunch();
         relaunchStage = 'relaunch';
-        const { relaunch } = await import('@tauri-apps/plugin-process');
         await relaunch();
       } catch (error) {
         await restoreCodexLocalAccessAfterRelaunchFailure();

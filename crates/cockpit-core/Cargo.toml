@@ -13,6 +13,7 @@ thiserror.workspace = true
 chrono.workspace = true
 dirs.workspace = true
 reqwest.workspace = true
+reqwest_dav.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true
@@ -49,6 +50,7 @@ sha1.workspace = true
 tiny_http.workspace = true
 rsa.workspace = true
 serde_urlencoded.workspace = true
+minisign-verify.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-notification-sys.workspace = true

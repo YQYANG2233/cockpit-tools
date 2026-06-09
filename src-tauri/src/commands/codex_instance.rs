@@ -10,6 +10,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::models::codex::CodexAppSpeed;
 use crate::models::{DefaultInstanceSettings, InstanceLaunchMode, InstanceProfile};
 use crate::modules;
+use cockpit_core::modules::codex_wakeup;
 
 const DEFAULT_INSTANCE_ID: &str = "__default__";
 
@@ -244,7 +245,7 @@ fn sync_codex_threads_across_idle_instances(context: &str) {
         return;
     }
 
-    match modules::codex_thread_sync::sync_threads_across_instances_if_all_stopped() {
+    match cockpit_core::modules::codex_thread_sync::sync_threads_across_instances_if_all_stopped() {
         Ok(Some(summary)) => {
             if summary.total_synced_thread_count > 0 {
                 modules::logger::log_info(&format!(
@@ -287,7 +288,9 @@ fn repair_session_visibility_before_launch(
     };
 
     let started = Instant::now();
-    let summary = modules::codex_session_visibility::repair_session_visibility_across_instances()?;
+    let summary =
+        cockpit_core::modules::codex_session_visibility::repair_session_visibility_across_instances(
+        )?;
     modules::logger::log_info(&format!(
         "[Codex Session Visibility] {}: repaired before launch, from_provider={}, to_provider={}, mutated_instances={}, rollout_files={}, sqlite_rows={}, elapsed_ms={}",
         context,
@@ -334,7 +337,9 @@ fn sanitize_codex_config_before_launch(data_dir: &Path) -> Result<(), String> {
 }
 
 fn read_launch_provider_for_dir(data_dir: &Path) -> Option<String> {
-    match modules::codex_session_visibility::read_history_visibility_provider_for_dir(data_dir) {
+    match cockpit_core::modules::codex_session_visibility::read_history_visibility_provider_for_dir(
+        data_dir,
+    ) {
         Ok(provider) => Some(provider),
         Err(error) => {
             modules::logger::log_warn(&format!(
@@ -452,7 +457,7 @@ fn powershell_quote(value: &str) -> String {
 
 fn build_launch_command(context: &CodexLaunchContext) -> Result<String, String> {
     sanitize_codex_config_before_launch(Path::new(&context.user_data_dir))?;
-    let runtime = modules::codex_wakeup::resolve_cli_runtime()?;
+    let runtime = codex_wakeup::resolve_cli_runtime()?;
     let parsed_args = modules::process::parse_extra_args(&context.extra_args);
 
     #[cfg(not(target_os = "windows"))]
@@ -624,55 +629,67 @@ pub async fn codex_open_instance_config_toml(
 
 #[tauri::command]
 pub async fn codex_sync_threads_across_instances(
-) -> Result<modules::codex_thread_sync::CodexInstanceThreadSyncSummary, String> {
-    modules::codex_thread_sync::sync_threads_across_instances()
+) -> Result<cockpit_core::modules::codex_thread_sync::CodexInstanceThreadSyncSummary, String> {
+    cockpit_core::modules::codex_thread_sync::sync_threads_across_instances()
 }
 
 #[tauri::command]
 pub async fn codex_sync_sessions_to_instance(
     session_ids: Vec<String>,
     target_instance_id: String,
-) -> Result<modules::codex_thread_sync::CodexInstanceTargetThreadSyncSummary, String> {
-    modules::codex_thread_sync::sync_sessions_to_instance(session_ids, target_instance_id)
+) -> Result<cockpit_core::modules::codex_thread_sync::CodexInstanceTargetThreadSyncSummary, String>
+{
+    cockpit_core::modules::codex_thread_sync::sync_sessions_to_instance(
+        session_ids,
+        target_instance_id,
+    )
 }
 
 #[tauri::command]
-pub async fn codex_repair_session_visibility_across_instances(
-) -> Result<modules::codex_session_visibility::CodexSessionVisibilityRepairSummary, String> {
-    modules::codex_session_visibility::repair_session_visibility_across_instances()
+pub async fn codex_repair_session_visibility_across_instances() -> Result<
+    cockpit_core::modules::codex_session_visibility::CodexSessionVisibilityRepairSummary,
+    String,
+> {
+    cockpit_core::modules::codex_session_visibility::repair_session_visibility_across_instances()
 }
 
 #[tauri::command]
 pub async fn codex_list_sessions_across_instances(
-) -> Result<Vec<modules::codex_session_manager::CodexSessionRecord>, String> {
-    modules::codex_session_manager::list_sessions_across_instances()
+) -> Result<Vec<cockpit_core::modules::codex_session_manager::CodexSessionRecord>, String> {
+    cockpit_core::modules::codex_session_manager::list_sessions_across_instances()
 }
 
 #[tauri::command]
 pub async fn codex_get_session_token_stats_across_instances(
     session_ids: Vec<String>,
-) -> Result<Vec<modules::codex_session_manager::CodexSessionTokenStats>, String> {
-    modules::codex_session_manager::get_session_token_stats_across_instances(session_ids)
+) -> Result<Vec<cockpit_core::modules::codex_session_manager::CodexSessionTokenStats>, String> {
+    cockpit_core::modules::codex_session_manager::get_session_token_stats_across_instances(
+        session_ids,
+    )
 }
 
 #[tauri::command]
 pub async fn codex_move_sessions_to_trash_across_instances(
     session_ids: Vec<String>,
-) -> Result<modules::codex_session_manager::CodexSessionTrashSummary, String> {
-    modules::codex_session_manager::move_sessions_to_trash_across_instances(session_ids)
+) -> Result<cockpit_core::modules::codex_session_manager::CodexSessionTrashSummary, String> {
+    cockpit_core::modules::codex_session_manager::move_sessions_to_trash_across_instances(
+        session_ids,
+    )
 }
 
 #[tauri::command]
 pub async fn codex_list_trashed_sessions_across_instances(
-) -> Result<Vec<modules::codex_session_manager::CodexTrashedSessionRecord>, String> {
-    modules::codex_session_manager::list_trashed_sessions_across_instances()
+) -> Result<Vec<cockpit_core::modules::codex_session_manager::CodexTrashedSessionRecord>, String> {
+    cockpit_core::modules::codex_session_manager::list_trashed_sessions_across_instances()
 }
 
 #[tauri::command]
 pub async fn codex_restore_sessions_from_trash_across_instances(
     session_ids: Vec<String>,
-) -> Result<modules::codex_session_manager::CodexSessionRestoreSummary, String> {
-    modules::codex_session_manager::restore_sessions_from_trash_across_instances(session_ids)
+) -> Result<cockpit_core::modules::codex_session_manager::CodexSessionRestoreSummary, String> {
+    cockpit_core::modules::codex_session_manager::restore_sessions_from_trash_across_instances(
+        session_ids,
+    )
 }
 
 #[tauri::command]

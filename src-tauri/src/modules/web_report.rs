@@ -159,7 +159,9 @@ async fn run_refresh_for_service(policy: ServiceRefreshPolicy) -> Result<(), Str
                 .await
                 .map(|_| ())
         }
-        "codex" => super::codex_quota::refresh_all_quotas().await.map(|_| ()),
+        "codex" => cockpit_core::modules::codex_quota::refresh_all_quotas()
+            .await
+            .map(|_| ()),
         "ghcp" => super::github_copilot_account::refresh_all_tokens()
             .await
             .map(|_| ()),

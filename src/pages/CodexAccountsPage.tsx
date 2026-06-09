@@ -100,13 +100,13 @@ import { filterCodexLocalAccessAccountIds } from "../utils/codexLocalAccessAccou
 import { isBlockingCodexQuotaError } from "../utils/codexQuotaError";
 import { buildCodexAccountPresentation } from "../presentation/platformAccountPresentation";
 
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
+import { listen, UnlistenFn } from "../lib/runtime/events";
+import { invoke } from "../lib/runtime/invoke";
 import {
   confirm as confirmDialog,
   open as openFileDialog,
-} from "@tauri-apps/plugin-dialog";
-import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+} from "../lib/runtime/dialog";
+import { openPath, openUrl } from "../lib/runtime/opener";
 import {
   CodexOverviewTabsHeader,
   CodexTab,

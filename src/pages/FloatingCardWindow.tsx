@@ -1,10 +1,8 @@
 import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, ExternalLink, Pin, PinOff, RefreshCw, Star, Undo2, X } from 'lucide-react';
-import { getCurrentWebview } from '@tauri-apps/api/webview';
-import { LogicalSize } from '@tauri-apps/api/dpi';
-import { getCurrentWindow } from '@tauri-apps/api/window';
-import { invoke } from '@tauri-apps/api/core';
-import { TauriEvent, listen } from '@tauri-apps/api/event';
+import { getCurrentWebview, getCurrentWindow, LogicalSize } from '../lib/runtime/window';
+import { invoke } from '../lib/runtime/invoke';
+import { TauriEvent, listen } from '../lib/runtime/events';
 import { useTranslation } from 'react-i18next';
 import {
   buildAntigravityAccountPresentation,

@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/runtime/invoke';
 
 export const WEBDAV_SYNC_STATE_CHANGED_EVENT = 'webdav-sync-state-changed';
 

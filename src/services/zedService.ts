@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/runtime/invoke';
 import { ZedAccount, ZedOAuthStartResponse, ZedRuntimeStatus } from '../types/zed';
 
 type ZedOAuthStartResponseRaw = Partial<ZedOAuthStartResponse> & {

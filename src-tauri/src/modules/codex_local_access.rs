@@ -16,10 +16,9 @@ use crate::models::codex_local_access::{
     CodexLocalAccessUsageStats,
 };
 use crate::modules::atomic_write::write_string_atomic;
-use crate::modules::{
-    account, codex_account, codex_oauth, codex_protocol, codex_wakeup, logger, process,
-};
+use crate::modules::{account, codex_account, codex_oauth, codex_protocol, logger, process};
 use base64::{engine::general_purpose, Engine as _};
+use cockpit_core::modules::codex_wakeup;
 use futures_util::{SinkExt, StreamExt};
 use rand::{distributions::Alphanumeric, Rng};
 use reqwest::header::{HeaderName, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};

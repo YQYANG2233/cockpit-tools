@@ -4,7 +4,7 @@
  * 内存中维护一份缓存避免频繁 IO
  */
 
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '../lib/runtime/invoke'
 
 const LEGACY_STORAGE_KEY = 'agtools.account_groups';
 

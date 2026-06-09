@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/runtime/invoke';
 
 export interface ManagedLogFile {
   log_file_path: string;

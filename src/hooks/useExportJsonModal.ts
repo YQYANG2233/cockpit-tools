@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
-import { save } from '@tauri-apps/plugin-dialog';
-import { openPath } from '@tauri-apps/plugin-opener';
-import { invoke } from '@tauri-apps/api/core';
+import { save } from '../lib/runtime/dialog';
+import { openPath } from '../lib/runtime/opener';
+import { invoke } from '../lib/runtime/invoke';
 
 interface UseExportJsonModalOptions {
   exportFilePrefix: string;

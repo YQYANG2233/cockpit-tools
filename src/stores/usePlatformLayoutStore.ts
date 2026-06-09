@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/runtime/invoke';
 import { ALL_PLATFORM_IDS, PlatformId } from '../types/platform';
 
 const PLATFORM_LAYOUT_STORAGE_KEY = 'agtools.platform_layout.v1';

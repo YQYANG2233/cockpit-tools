@@ -362,6 +362,54 @@ pub async fn start_oauth_login(
     Ok(CodexOAuthLoginStartResponse { login_id, auth_url })
 }
 
+pub fn start_oauth_login_headless() -> Result<CodexOAuthLoginStartResponse, String> {
+    hydrate_oauth_state_if_missing();
+    {
+        let oauth_state = OAUTH_STATE.lock().unwrap();
+        if let Some(state) = oauth_state.as_ref() {
+            if state.expires_at <= now_timestamp() {
+                let expected_state = state.state.clone();
+                let expected_login_id = state.login_id.clone();
+                drop(oauth_state);
+                clear_oauth_state_if_matches(&expected_state, &expected_login_id);
+            } else {
+                logger::log_info(&format!(
+                    "Codex OAuth reusing active headless login session: login_id={}, port={}, redirect_uri={}",
+                    state.login_id, state.port, state.redirect_uri
+                ));
+                return Ok(to_start_response(state));
+            }
+        }
+    }
+
+    let port = find_available_port()?;
+    let code_verifier = generate_base64url_token();
+    let code_challenge = generate_code_challenge(&code_verifier);
+    let state_token = generate_base64url_token();
+    let login_id = generate_base64url_token();
+    let redirect_uri = format!("http://localhost:{}/auth/callback", port);
+    let auth_url = build_auth_url(&redirect_uri, &code_challenge, &state_token);
+
+    let oauth_state = OAuthState {
+        login_id: login_id.clone(),
+        auth_url: auth_url.clone(),
+        redirect_uri: redirect_uri.clone(),
+        code_verifier,
+        state: state_token,
+        port,
+        expires_at: now_timestamp() + OAUTH_TIMEOUT_SECONDS,
+        code: None,
+    };
+    set_oauth_state(Some(oauth_state));
+
+    logger::log_info(&format!(
+        "Codex OAuth headless login session created: login_id={}, port={}, redirect_uri={}",
+        login_id, port, redirect_uri
+    ));
+
+    Ok(CodexOAuthLoginStartResponse { login_id, auth_url })
+}
+
 async fn start_callback_server(
     port: u16,
     expected_state: String,

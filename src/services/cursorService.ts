@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/runtime/invoke';
 import { CursorAccount } from '../types/cursor';
 
 export interface CursorOAuthLoginStartResponse {

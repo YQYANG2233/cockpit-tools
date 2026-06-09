@@ -15,6 +15,8 @@ tauri-build = { version = "2", features = [] }
 swift-rs = { version = "1.0.7", features = ["build"] }
 
 [dependencies]
+cockpit-core = { path = "../crates/cockpit-core" }
+cockpit-service = { path = "../crates/cockpit-service" }
 tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
@@ -40,7 +42,6 @@ tracing-appender = "0.2"
 tracing-log = "0.2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 base64 = "0.22"
-minisign-verify = "0.2"
 tokio = { version = "1", features = ["full"] }
 tokio-rustls = "0.26"
 rustls = "0.23"

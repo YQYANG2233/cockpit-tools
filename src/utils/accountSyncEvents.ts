@@ -1,5 +1,5 @@
-import { emit } from '@tauri-apps/api/event';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { emit } from '../lib/runtime/events';
+import { getCurrentWindow } from '../lib/runtime/window';
 import type { PlatformId } from '../types/platform';
 
 export const ACCOUNTS_CHANGED_EVENT = 'accounts:changed';

@@ -1,6 +1,6 @@
 import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog';
+import { confirm as confirmDialog } from '../../lib/runtime/dialog';
 import { Check, ChevronDown, ChevronRight, Copy, Eye, Folder, RefreshCw, RotateCcw, Trash2, X } from 'lucide-react';
 import { ModalErrorMessage, useModalErrorState } from '../ModalErrorMessage';
 import { useEscClose } from '../../hooks/useEscClose';

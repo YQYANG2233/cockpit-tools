@@ -3,7 +3,7 @@
  * 与后端 group_settings 模块交互
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/runtime/invoke';
 
 /** 分组配置 */
 export interface GroupSettings {

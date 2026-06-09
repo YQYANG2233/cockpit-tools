@@ -1521,7 +1521,7 @@ fn is_windows_antigravity_main_executable(name: &str, exe_path: &str) -> bool {
         && !exe_path.contains("crashpad")
 }
 
-fn detect_antigravity_exec_path() -> Option<std::path::PathBuf> {
+pub(crate) fn detect_antigravity_exec_path() -> Option<std::path::PathBuf> {
     if let Some(path) = find_antigravity_process_exe() {
         return Some(path);
     }

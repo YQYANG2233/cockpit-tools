@@ -1,0 +1,21 @@
+[package]
+name = "cockpit-service"
+version = "0.1.0"
+edition = "2021"
+authors = ["jlcodes"]
+license = "CC-BY-NC-SA-4.0"
+
+[dependencies]
+cockpit-core = { path = "../cockpit-core" }
+serde.workspace = true
+serde_json.workspace = true
+tiny_http.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tokio.workspace = true
+dirs.workspace = true
+url.workspace = true
+reqwest.workspace = true
+toml_edit = "0.20"
+urlencoding = "2.1"
+log = "0.4"

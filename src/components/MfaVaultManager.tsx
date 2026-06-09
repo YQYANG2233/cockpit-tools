@@ -1,8 +1,8 @@
 import { type ChangeEvent, type ClipboardEvent, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowDown, ArrowUp, Check, Copy, Download, History, Key, Pencil, Trash2, Upload, X } from 'lucide-react';
-import { save, open, confirm } from '@tauri-apps/plugin-dialog';
-import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
+import { save, open, confirm } from '../lib/runtime/dialog';
+import { writeTextFile, readTextFile } from '../lib/runtime/fs';
 import jsQR from 'jsqr';
 import {
   MFA_STORAGE_KEY_HISTORY,

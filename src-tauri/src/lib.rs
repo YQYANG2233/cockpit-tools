@@ -160,6 +160,16 @@ pub fn run() {
             // 存储全局 AppHandle
             let _ = APP_HANDLE.set(app.handle().clone());
 
+            std::thread::spawn(|| {
+                let addr = cockpit_service::resolve_addr_from_env();
+                if let Err(err) = cockpit_service::start_server(&addr) {
+                    logger::log_warn(&format!(
+                        "[Service] Cockpit service startup skipped: {}",
+                        err
+                    ));
+                }
+            });
+
             // 启动时清理 WebKit LocalStorage WAL，防止无限膨胀
             std::thread::spawn(|| {
                 modules::webkit_cache_maintenance::checkpoint_webkit_localstorage();

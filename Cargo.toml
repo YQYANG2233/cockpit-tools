@@ -3,6 +3,8 @@ members = [
     "src-tauri",
     "crates/cockpit-core",
     "crates/cockpit-cli",
+    "crates/cockpit-service",
+    "crates/cockpit-web",
 ]
 resolver = "2"
 
@@ -15,6 +17,7 @@ thiserror = "2"
 chrono = "0.4"
 dirs = "5.0"
 reqwest = { version = "0.12", features = ["json", "gzip", "brotli", "deflate", "zstd", "stream"] }
+reqwest_dav = "0.3.3"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 uuid = { version = "1.10", features = ["v4", "serde"] }
@@ -32,7 +35,7 @@ mac-notification-sys = "0.6"
 tauri-plugin-notification = "2"
 rand = "0.8"
 sha2 = "0.10"
-tokio-tungstenite = "0.26"
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
 futures-util = "0.3"
 rustls = "0.23"
 rcgen = "0.13"
@@ -47,3 +50,4 @@ tiny_http = "0.12"
 rsa = "0.9"
 serde_urlencoded = "0.7"
 windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+minisign-verify = "0.2"

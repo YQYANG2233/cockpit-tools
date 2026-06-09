@@ -1,7 +1,7 @@
 import { ReactNode, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Bell, ChevronLeft, X } from 'lucide-react';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { openUrl } from '../lib/runtime/opener';
 import { useTranslation } from 'react-i18next';
 import type { Page } from '../types/navigation';
 import type { Announcement, AnnouncementAction } from '../types/announcement';

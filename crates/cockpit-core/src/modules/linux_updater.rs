@@ -1,4 +1,6 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+pub const UPDATE_PROGRESS_EVENT: &str = "update://linux-progress";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -9,25 +11,38 @@ pub struct UpdateRuntimeInfo {
     pub updater_target: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdaterPluginConfig {
+    pub pubkey: String,
+    pub endpoints: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct LinuxUpdateProgressPayload {
+    pub version: String,
+    pub phase: String,
+    pub progress: Option<u8>,
+}
+
 #[cfg(target_os = "linux")]
 mod imp {
-    use super::UpdateRuntimeInfo;
-    use crate::modules::{logger, update_checker};
+    use super::{
+        LinuxUpdateProgressPayload, UpdateRuntimeInfo, UpdaterPluginConfig, UPDATE_PROGRESS_EVENT,
+    };
+    use crate::modules::logger;
     use base64::Engine;
     use futures_util::StreamExt;
     use minisign_verify::{PublicKey, Signature};
-    use serde::{Deserialize, Serialize};
+    use serde::Deserialize;
     use std::path::{Path, PathBuf};
     use std::process::{Command, Output};
-    use tauri::{AppHandle, Emitter};
     use tokio::fs;
     use tokio::io::AsyncWriteExt;
     use url::Url;
 
-    const UPDATE_PROGRESS_EVENT: &str = "update://linux-progress";
     const ZH_SECTION_HEADER: &str = "## 更新日志（中文）";
     const EN_SECTION_HEADER: &str = "## Changelog (English)";
-    const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum LinuxInstallKind {
@@ -46,20 +61,6 @@ mod imp {
                 Self::Unknown => "unknown",
             }
         }
-    }
-
-    #[derive(Debug, Clone, Serialize)]
-    #[serde(rename_all = "snake_case")]
-    struct LinuxUpdateProgressPayload {
-        version: String,
-        phase: String,
-        progress: Option<u8>,
-    }
-
-    #[derive(Debug, Clone, Deserialize)]
-    struct UpdaterPluginConfig {
-        pubkey: String,
-        endpoints: Vec<String>,
     }
 
     #[derive(Debug, Clone, Deserialize)]
@@ -89,10 +90,17 @@ mod imp {
         }
     }
 
-    pub async fn install_linux_update(
-        app: AppHandle,
+    pub async fn install_linux_update<SaveNotes, EmitProgress>(
+        config: UpdaterPluginConfig,
+        current_version: &str,
         expected_version: Option<String>,
-    ) -> Result<(), String> {
+        save_pending_notes: SaveNotes,
+        emit_progress: EmitProgress,
+    ) -> Result<(), String>
+    where
+        SaveNotes: Fn(String, String, String) -> Result<(), String>,
+        EmitProgress: Fn(LinuxUpdateProgressPayload),
+    {
         let install_kind = detect_linux_install_kind();
         if !matches!(install_kind, LinuxInstallKind::Deb | LinuxInstallKind::Rpm) {
             return Err(format!(
@@ -101,8 +109,7 @@ mod imp {
             ));
         }
 
-        let updater_config = load_updater_plugin_config(&app)?;
-        let endpoint = updater_config
+        let endpoint = config
             .endpoints
             .first()
             .cloned()
@@ -126,10 +133,10 @@ mod imp {
             }
         }
 
-        if !is_newer_version(&manifest_version, CURRENT_VERSION) {
+        if !is_newer_version(&manifest_version, current_version) {
             return Err(format!(
                 "No newer Linux update available (current={}, latest={})",
-                CURRENT_VERSION, manifest_version
+                current_version, manifest_version
             ));
         }
 
@@ -140,42 +147,48 @@ mod imp {
             .ok_or_else(|| format!("No package found for updater target {}", platform_key))?;
 
         let (release_notes, release_notes_zh) = split_release_notes(&manifest.notes);
-        update_checker::save_pending_update_notes(
-            manifest_version.clone(),
-            release_notes,
-            release_notes_zh,
-        )?;
+        save_pending_notes(manifest_version.clone(), release_notes, release_notes_zh)?;
 
-        emit_progress(&app, &manifest_version, "download_started", Some(0));
+        publish(
+            &emit_progress,
+            &manifest_version,
+            "download_started",
+            Some(0),
+        );
         logger::log_info(&format!(
-            "[Updater] Linux 托管更新开始下载: version={}, kind={}, target={}",
+            "[Updater] Linux managed update download started: version={}, kind={}, target={}",
             manifest_version,
             install_kind.as_str(),
             platform_key
         ));
 
         let downloaded = download_update_package(
-            &app,
+            &emit_progress,
             &manifest_version,
             &platform.url,
             &platform.signature,
-            &updater_config.pubkey,
+            &config.pubkey,
         )
         .await?;
 
-        emit_progress(&app, &manifest_version, "auth_required", Some(100));
+        publish(
+            &emit_progress,
+            &manifest_version,
+            "auth_required",
+            Some(100),
+        );
         logger::log_info(&format!(
-            "[Updater] Linux 托管更新下载完成，准备安装: version={}, path={}",
+            "[Updater] Linux managed update downloaded, installing: version={}, path={}",
             manifest_version,
             downloaded.display()
         ));
 
-        emit_progress(&app, &manifest_version, "installing", Some(100));
+        publish(&emit_progress, &manifest_version, "installing", Some(100));
         install_downloaded_package(install_kind, &downloaded)?;
 
-        emit_progress(&app, &manifest_version, "completed", Some(100));
+        publish(&emit_progress, &manifest_version, "completed", Some(100));
         logger::log_info(&format!(
-            "[Updater] Linux 托管更新安装完成: version={}, kind={}",
+            "[Updater] Linux managed update installed: version={}, kind={}",
             manifest_version,
             install_kind.as_str()
         ));
@@ -183,25 +196,19 @@ mod imp {
         Ok(())
     }
 
-    fn emit_progress(app: &AppHandle, version: &str, phase: &str, progress: Option<u8>) {
-        let payload = LinuxUpdateProgressPayload {
+    fn publish<EmitProgress>(
+        emit_progress: &EmitProgress,
+        version: &str,
+        phase: &str,
+        progress: Option<u8>,
+    ) where
+        EmitProgress: Fn(LinuxUpdateProgressPayload),
+    {
+        emit_progress(LinuxUpdateProgressPayload {
             version: version.to_string(),
             phase: phase.to_string(),
             progress,
-        };
-        let _ = app.emit(UPDATE_PROGRESS_EVENT, payload);
-    }
-
-    fn load_updater_plugin_config(app: &AppHandle) -> Result<UpdaterPluginConfig, String> {
-        let value = app
-            .config()
-            .plugins
-            .0
-            .get("updater")
-            .cloned()
-            .ok_or_else(|| "Updater plugin config is missing".to_string())?;
-        serde_json::from_value::<UpdaterPluginConfig>(value)
-            .map_err(|error| format!("Failed to parse updater plugin config: {}", error))
+        });
     }
 
     async fn fetch_latest_manifest(endpoint: &str) -> Result<LatestManifest, String> {
@@ -218,13 +225,16 @@ mod imp {
             .map_err(|error| format!("Failed to parse latest manifest: {}", error))
     }
 
-    async fn download_update_package(
-        app: &AppHandle,
+    async fn download_update_package<EmitProgress>(
+        emit_progress: &EmitProgress,
         version: &str,
         url: &str,
         signature: &str,
         pubkey: &str,
-    ) -> Result<PathBuf, String> {
+    ) -> Result<PathBuf, String>
+    where
+        EmitProgress: Fn(LinuxUpdateProgressPayload),
+    {
         let client = reqwest::Client::new();
         let response = client
             .get(url)
@@ -268,7 +278,7 @@ mod imp {
                 let progress = ((downloaded.saturating_mul(100)) / content_length).min(100) as u8;
                 if progress != last_progress {
                     last_progress = progress;
-                    emit_progress(app, version, "downloading", Some(progress));
+                    publish(emit_progress, version, "downloading", Some(progress));
                 }
             }
         }
@@ -278,7 +288,7 @@ mod imp {
             .map_err(|error| format!("Failed to flush update package: {}", error))?;
 
         verify_signature(&downloaded_bytes, signature, pubkey)?;
-        emit_progress(app, version, "downloaded", Some(100));
+        publish(emit_progress, version, "downloaded", Some(100));
         Ok(package_path)
     }
 
@@ -291,7 +301,7 @@ mod imp {
             .and_then(|parsed| {
                 parsed
                     .path_segments()
-                    .and_then(|segments| segments.last().map(str::to_string))
+                    .and_then(|mut segments| segments.next_back().map(str::to_string))
             })
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| format!("cockpit-tools-update-{}", version));
@@ -351,8 +361,7 @@ mod imp {
     }
 
     fn current_platform_key(kind: LinuxInstallKind) -> Result<String, String> {
-        let arch = std::env::consts::ARCH;
-        let arch = match arch {
+        let arch = match std::env::consts::ARCH {
             "x86_64" => "x86_64",
             "aarch64" => "aarch64",
             other => {
@@ -453,7 +462,7 @@ mod imp {
 
     fn run_command(program: &str, args: &[&str]) -> Result<(), String> {
         logger::log_info(&format!(
-            "[Updater] Linux 安装命令: {} {}",
+            "[Updater] Linux install command: {} {}",
             program,
             args.join(" ")
         ));
@@ -574,33 +583,7 @@ mod imp {
 
 #[cfg(not(target_os = "linux"))]
 mod imp {
-    use super::UpdateRuntimeInfo;
-    use tauri::AppHandle;
-
-    #[cfg(target_os = "windows")]
-    fn windows_updater_target() -> Option<String> {
-        use tauri::utils::config::BundleType;
-        use tauri::utils::platform::bundle_type;
-
-        let arch = match std::env::consts::ARCH {
-            "x86_64" => "x86_64",
-            "aarch64" => "aarch64",
-            _ => "x86_64",
-        };
-        let base = format!("windows-{}", arch);
-        let installer_suffix = match bundle_type() {
-            Some(BundleType::Nsis) => "nsis",
-            Some(BundleType::Msi) => "msi",
-            _ => "nsis",
-        };
-
-        Some(format!("{}-{}", base, installer_suffix))
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    fn windows_updater_target() -> Option<String> {
-        None
-    }
+    use super::{LinuxUpdateProgressPayload, UpdateRuntimeInfo, UpdaterPluginConfig};
 
     pub fn get_update_runtime_info() -> UpdateRuntimeInfo {
         let platform = if cfg!(target_os = "macos") {
@@ -611,18 +594,36 @@ mod imp {
             "unknown"
         };
 
+        let updater_target = if cfg!(target_os = "windows") {
+            let arch = match std::env::consts::ARCH {
+                "x86_64" => "x86_64",
+                "aarch64" => "aarch64",
+                _ => "x86_64",
+            };
+            Some(format!("windows-{}-nsis", arch))
+        } else {
+            None
+        };
+
         UpdateRuntimeInfo {
             platform: platform.to_string(),
             linux_install_kind: "unknown".to_string(),
             linux_managed_install_supported: false,
-            updater_target: windows_updater_target(),
+            updater_target,
         }
     }
 
-    pub async fn install_linux_update(
-        _app: AppHandle,
+    pub async fn install_linux_update<SaveNotes, EmitProgress>(
+        _config: UpdaterPluginConfig,
+        _current_version: &str,
         _expected_version: Option<String>,
-    ) -> Result<(), String> {
+        _save_pending_notes: SaveNotes,
+        _emit_progress: EmitProgress,
+    ) -> Result<(), String>
+    where
+        SaveNotes: Fn(String, String, String) -> Result<(), String>,
+        EmitProgress: Fn(LinuxUpdateProgressPayload),
+    {
         Err("Linux managed package update is only supported on Linux".to_string())
     }
 }

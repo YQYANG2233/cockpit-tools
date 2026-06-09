@@ -1,7 +1,8 @@
-use crate::modules::linux_updater::{self, UpdateRuntimeInfo};
 use crate::modules::logger;
 use crate::modules::update_checker::{self, ReleaseHistoryItem, UpdateSettings, VersionJumpInfo};
+use cockpit_core::modules::linux_updater::{self, UpdateRuntimeInfo, UpdaterPluginConfig};
 use std::time::Instant;
+use tauri::Emitter;
 
 /// Check if we should check for updates (based on interval settings)
 #[tauri::command]
@@ -125,10 +126,33 @@ pub fn get_update_runtime_info() -> Result<UpdateRuntimeInfo, String> {
     Ok(linux_updater::get_update_runtime_info())
 }
 
+fn load_updater_plugin_config(app: &tauri::AppHandle) -> Result<UpdaterPluginConfig, String> {
+    let value = app
+        .config()
+        .plugins
+        .0
+        .get("updater")
+        .cloned()
+        .ok_or_else(|| "Updater plugin config is missing".to_string())?;
+    serde_json::from_value::<UpdaterPluginConfig>(value)
+        .map_err(|error| format!("Failed to parse updater plugin config: {}", error))
+}
+
 #[tauri::command]
 pub async fn install_linux_update(
     app: tauri::AppHandle,
     expected_version: Option<String>,
 ) -> Result<(), String> {
-    linux_updater::install_linux_update(app, expected_version).await
+    let updater_config = load_updater_plugin_config(&app)?;
+    let app_for_progress = app.clone();
+    linux_updater::install_linux_update(
+        updater_config,
+        env!("CARGO_PKG_VERSION"),
+        expected_version,
+        update_checker::save_pending_update_notes,
+        move |payload| {
+            let _ = app_for_progress.emit(linux_updater::UPDATE_PROGRESS_EVENT, payload);
+        },
+    )
+    .await
 }

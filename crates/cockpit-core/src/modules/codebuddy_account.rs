@@ -1,7 +1,7 @@
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Instant;
 use tauri::Emitter;
@@ -1009,6 +1009,111 @@ pub fn get_default_codebuddy_data_dir() -> Option<PathBuf> {
 pub fn get_default_codebuddy_state_db_path() -> Option<PathBuf> {
     get_default_codebuddy_data_dir()
         .map(|d| d.join("User").join("globalStorage").join("state.vscdb"))
+}
+
+fn build_instance_session_json(account: &CodebuddyAccount) -> String {
+    let uid = account.uid.as_deref().unwrap_or("");
+    let nickname = account.nickname.as_deref().unwrap_or("");
+    let enterprise_id = account.enterprise_id.as_deref().unwrap_or("");
+    let enterprise_name = account.enterprise_name.as_deref().unwrap_or("");
+    let domain = account.domain.as_deref().unwrap_or("");
+    let refresh_token = account.refresh_token.as_deref().unwrap_or("");
+    let expires_at = account.expires_at.unwrap_or(0);
+
+    serde_json::json!({
+        "id": "Tencent-Cloud.genie-ide",
+        "token": account.access_token,
+        "refreshToken": refresh_token,
+        "expiresAt": expires_at,
+        "domain": domain,
+        "accessToken": format!("{}+{}", uid, account.access_token),
+        "converted": true,
+        "account": {
+            "id": uid,
+            "uid": uid,
+            "label": nickname,
+            "nickname": nickname,
+            "enterpriseId": enterprise_id,
+            "enterpriseName": enterprise_name,
+            "pluginEnabled": true,
+            "lastLogin": true,
+        },
+        "auth": {
+            "accessToken": account.access_token,
+            "refreshToken": refresh_token,
+            "tokenType": account.token_type.as_deref().unwrap_or("Bearer"),
+            "domain": domain,
+            "expiresAt": expires_at,
+            "expiresIn": expires_at,
+            "refreshExpiresIn": 0,
+            "refreshExpiresAt": 0,
+            "lastRefreshTime": chrono::Utc::now().timestamp_millis(),
+        }
+    })
+    .to_string()
+}
+
+fn ensure_instance_state_db_path(user_data_dir: &str) -> Result<PathBuf, String> {
+    let root = Path::new(user_data_dir);
+    let candidates = [
+        root.join("User").join("globalStorage").join("state.vscdb"),
+        root.join("globalStorage").join("state.vscdb"),
+        root.join("state.vscdb"),
+    ];
+    if let Some(path) = candidates.iter().find(|path| path.exists()) {
+        return Ok(path.clone());
+    }
+
+    let preferred = root.join("User").join("globalStorage").join("state.vscdb");
+    if let Some(parent) = preferred.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("create CodeBuddy globalStorage failed: {err}"))?;
+    }
+    if let Some(default_db) = get_default_codebuddy_state_db_path() {
+        if default_db.exists() && default_db != preferred {
+            let _ = fs::copy(default_db, &preferred);
+        }
+    }
+    Ok(preferred)
+}
+
+fn verify_instance_state_db_injection(state_db_path: &Path, db_key: &str) -> Result<(), String> {
+    let conn = rusqlite::Connection::open(state_db_path)
+        .map_err(|err| format!("open CodeBuddy state.vscdb failed: {err}"))?;
+    let value: Option<String> = conn
+        .query_row(
+            "SELECT value FROM ItemTable WHERE key = ?1",
+            [db_key],
+            |row| row.get(0),
+        )
+        .ok();
+    match value {
+        Some(stored) if !stored.trim().is_empty() => Ok(()),
+        _ => Err(format!(
+            "CodeBuddy account injection verification failed: db={}, key={}",
+            state_db_path.to_string_lossy(),
+            db_key
+        )),
+    }
+}
+
+pub fn inject_to_codebuddy_user_data_dir(
+    user_data_dir: &str,
+    account_id: &str,
+) -> Result<(), String> {
+    let account =
+        load_account(account_id).ok_or_else(|| format!("account not found: {account_id}"))?;
+    let state_db_path = ensure_instance_state_db_path(user_data_dir)?;
+    let secret_key =
+        r#"{"extensionId":"tencent-cloud.coding-copilot","key":"planning-genie.new.accessToken"}"#;
+    let db_key = format!("secret://{}", secret_key);
+    let session_json = build_instance_session_json(&account);
+    crate::modules::vscode_inject::inject_secret_to_state_db_for_codebuddy(
+        &state_db_path,
+        &db_key,
+        &session_json,
+    )?;
+    verify_instance_state_db_injection(&state_db_path, &db_key)
 }
 
 fn parse_local_access_token(value: &Value) -> Option<String> {

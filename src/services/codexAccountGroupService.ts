@@ -7,7 +7,7 @@
  * 因为 Codex 账号与 Antigravity IDE 账号是两套不同的账号体系。
  */
 
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '../lib/runtime/invoke'
 
 let idCounter = 0;
 function generateId(): string {

@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/runtime/invoke';
 import type { CodexAccount } from '../types/codex';
 import type {
   CodexProviderEnableModePreference,

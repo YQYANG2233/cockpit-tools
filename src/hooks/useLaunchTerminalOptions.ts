@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/runtime/invoke";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { usePlatformRuntimeSupport } from "./usePlatformRuntimeSupport";

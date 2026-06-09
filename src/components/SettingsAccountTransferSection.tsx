@@ -12,7 +12,7 @@ import {
 import { Archive, ChevronLeft, Download, FolderOpen, RefreshCw, Trash2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { createPortal } from 'react-dom';
-import { save } from '@tauri-apps/plugin-dialog';
+import { save } from '../lib/runtime/dialog';
 import { ExportJsonModal } from './ExportJsonModal';
 import { useExportJsonModal } from '../hooks/useExportJsonModal';
 import { useEscClose } from '../hooks/useEscClose';

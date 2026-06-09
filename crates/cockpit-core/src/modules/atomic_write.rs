@@ -104,6 +104,21 @@ pub fn write_string_atomic(path: &Path, content: &str) -> Result<(), String> {
     write_string_atomic_internal(path, content, true)
 }
 
+pub fn write_bytes_atomic(path: &Path, content: &[u8]) -> Result<(), String> {
+    let parent = path.parent().ok_or("鏃犳硶瀹氫綅鐩爣鐩綍")?;
+    fs::create_dir_all(parent).map_err(|e| format_io_error("鍒涘缓鐩綍", parent, &e))?;
+
+    let temp_path = build_temp_file_path(parent, path, "atomic");
+    fs::write(&temp_path, content)
+        .map_err(|e| format_io_error("鍐欏叆涓存椂鏂囦欢", &temp_path, &e))?;
+    if let Err(err) = fs::rename(&temp_path, path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(format_io_error("鏇挎崲鏂囦欢", path, &err));
+    }
+
+    Ok(())
+}
+
 pub fn restore_from_backup(path: &Path) -> Result<bool, String> {
     let backup_path = build_backup_path(path)?;
     if !backup_path.exists() {

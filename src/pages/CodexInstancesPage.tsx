@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronLeft, Copy, Play, RefreshCw, Settings, X } from "lucide-react";
-import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
+import { confirm as confirmDialog } from "../lib/runtime/dialog";
 import { useTranslation } from "react-i18next";
 import { PlatformInstancesContent } from "../components/platform/PlatformInstancesContent";
 import { SingleSelectDropdown } from "../components/SingleSelectDropdown";

@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/runtime/invoke';
 import { DataTransferSelection, exportDataTransferJson } from './dataTransferService';
 import { ALL_PLATFORM_IDS, PlatformId } from '../types/platform';
 import { getWebdavSyncSettings, uploadAutoBackupToWebdav } from './webdavSyncService';

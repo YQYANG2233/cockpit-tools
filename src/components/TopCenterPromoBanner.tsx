@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { openUrl } from '../lib/runtime/opener';
 import { useTranslation } from 'react-i18next';
 import { useTopRightAdStore } from '../stores/useTopRightAdStore';
 import { normalizeApiKeyFunOfficialUrl } from '../utils/apikeyFunLinks';

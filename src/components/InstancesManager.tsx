@@ -26,7 +26,7 @@ import {
   Eye,
   EyeOff,
 } from "lucide-react";
-import { confirm as confirmDialog, open } from "@tauri-apps/plugin-dialog";
+import { confirm as confirmDialog, open } from "../lib/runtime/dialog";
 import md5 from "blueimp-md5";
 import {
   CODEX_API_SERVICE_BIND_ID,

@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/runtime/invoke';
 import type { WorkbuddyAccount } from '../types/workbuddy';
 
 export interface WorkbuddyOAuthLoginStartResponse {

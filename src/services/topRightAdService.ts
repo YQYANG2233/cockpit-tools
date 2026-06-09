@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/runtime/invoke';
 import type { TopRightAdState } from '../types/topRightAd';
 
 export async function getTopRightAdState(): Promise<TopRightAdState> {

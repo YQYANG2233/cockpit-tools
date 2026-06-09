@@ -30,8 +30,8 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import { listen } from "@tauri-apps/api/event";
-import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
+import { listen } from "../lib/runtime/events";
+import { confirm as confirmDialog } from "../lib/runtime/dialog";
 import { useTranslation } from "react-i18next";
 import { CodexIcon } from "../components/icons/CodexIcon";
 import { ManualHelpIconButton } from "../components/ManualHelpIconButton";

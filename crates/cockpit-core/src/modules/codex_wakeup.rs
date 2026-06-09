@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter};
 
 const TASKS_FILE: &str = "codex_wakeup_tasks.json";
 const HISTORY_FILE: &str = "codex_wakeup_history.json";
@@ -33,6 +32,8 @@ static TASKS_LOCK: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| 
 static HISTORY_LOCK: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
 static TEST_CANCEL_SCOPES: std::sync::LazyLock<Mutex<HashMap<String, Arc<AtomicBool>>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+static RUNNING_TASKS: std::sync::LazyLock<Mutex<HashSet<String>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
 
 fn quarantine_corrupted_wakeup_file(path: &Path, label: &str, error: &impl std::fmt::Display) {
     match crate::modules::atomic_write::quarantine_file(path, "invalid-json") {
@@ -2073,8 +2074,8 @@ fn create_failure_record(
     }
 }
 
-fn emit_progress(
-    app: Option<&AppHandle>,
+fn emit_progress<F>(
+    emit_progress: &mut F,
     run_id: &str,
     context: &TaskRunContext,
     total: usize,
@@ -2085,11 +2086,9 @@ fn emit_progress(
     phase: &str,
     current_account_id: Option<&str>,
     item: Option<CodexWakeupHistoryItem>,
-) {
-    let Some(app) = app else {
-        return;
-    };
-
+) where
+    F: FnMut(CodexWakeupProgressPayload),
+{
     let payload = CodexWakeupProgressPayload {
         run_id: run_id.to_string(),
         trigger_type: context.trigger_type.clone(),
@@ -2104,7 +2103,7 @@ fn emit_progress(
         current_account_id: current_account_id.map(|value| value.to_string()),
         item,
     };
-    let _ = app.emit(PROGRESS_EVENT, payload);
+    emit_progress(payload);
 }
 
 fn create_cli_missing_record(
@@ -2288,15 +2287,18 @@ async fn run_single_account(
     }
 }
 
-pub async fn run_batch(
-    app: Option<&AppHandle>,
+pub async fn run_batch<F>(
     account_ids: Vec<String>,
     prompt: Option<String>,
     execution_config: CodexWakeupExecutionConfig,
     context: TaskRunContext,
     run_id: Option<String>,
     cancel_scope_id: Option<&str>,
-) -> Result<CodexWakeupBatchResult, String> {
+    mut emit_progress_payload: F,
+) -> Result<CodexWakeupBatchResult, String>
+where
+    F: FnMut(CodexWakeupProgressPayload),
+{
     let cleaned_ids: Vec<String> = account_ids
         .into_iter()
         .map(|item| item.trim().to_string())
@@ -2316,7 +2318,7 @@ pub async fn run_batch(
     let run_id = run_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let cancel_flag = resolve_cancel_flag(cancel_scope_id)?;
     emit_progress(
-        app,
+        &mut emit_progress_payload,
         &run_id,
         &context,
         total,
@@ -2344,7 +2346,7 @@ pub async fn run_batch(
             );
             failure_count += 1;
             emit_progress(
-                app,
+                &mut emit_progress_payload,
                 &run_id,
                 &context,
                 total,
@@ -2361,7 +2363,7 @@ pub async fn run_batch(
         }
 
         emit_progress(
-            app,
+            &mut emit_progress_payload,
             &run_id,
             &context,
             total,
@@ -2388,7 +2390,7 @@ pub async fn run_batch(
             failure_count += 1;
         }
         emit_progress(
-            app,
+            &mut emit_progress_payload,
             &run_id,
             &context,
             total,
@@ -2405,7 +2407,7 @@ pub async fn run_batch(
 
     add_history_items(records.clone())?;
     emit_progress(
-        app,
+        &mut emit_progress_payload,
         &run_id,
         &context,
         records.len(),
@@ -2485,4 +2487,65 @@ pub fn get_task(task_id: &str) -> Result<Option<CodexWakeupTask>, String> {
         .tasks
         .into_iter()
         .find(|item| item.id == task_id))
+}
+
+fn mark_task_running(task_id: &str) -> Result<bool, String> {
+    let mut guard = RUNNING_TASKS
+        .lock()
+        .map_err(|_| "Codex wakeup running task lock poisoned".to_string())?;
+    Ok(guard.insert(task_id.to_string()))
+}
+
+fn unmark_task_running(task_id: &str) {
+    if let Ok(mut guard) = RUNNING_TASKS.lock() {
+        guard.remove(task_id);
+    }
+}
+
+pub async fn run_task_now<F>(
+    task_id: &str,
+    trigger_type: &str,
+    run_id: Option<String>,
+    emit_progress: F,
+) -> Result<CodexWakeupBatchResult, String>
+where
+    F: FnMut(CodexWakeupProgressPayload),
+{
+    let task =
+        get_task(task_id)?.ok_or_else(|| format!("Codex wakeup task not found: {task_id}"))?;
+    if !mark_task_running(&task.id)? {
+        return Err("Codex wakeup task is already running".to_string());
+    }
+
+    let context = TaskRunContext {
+        trigger_type: trigger_type.to_string(),
+        task_id: Some(task.id.clone()),
+        task_name: Some(task.name.clone()),
+    };
+    let result = run_batch(
+        task.account_ids.clone(),
+        task.prompt.clone(),
+        CodexWakeupExecutionConfig {
+            model: task.model.clone(),
+            model_display_name: task.model_display_name.clone(),
+            model_reasoning_effort: task.model_reasoning_effort.clone(),
+        },
+        context,
+        run_id,
+        None,
+        emit_progress,
+    )
+    .await;
+
+    if let Ok(batch) = &result {
+        if let Err(err) = update_task_after_run(&task.id, &batch.records) {
+            logger::log_warn(&format!(
+                "[CodexWakeup] update task result failed: task_id={}, error={}",
+                task.id, err
+            ));
+        }
+    }
+
+    unmark_task_running(&task.id);
+    result
 }

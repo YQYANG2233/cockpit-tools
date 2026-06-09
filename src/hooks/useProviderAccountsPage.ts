@@ -19,8 +19,8 @@ import {
   type SetStateAction,
 } from 'react';
 import { useTranslation } from 'react-i18next';
-import { invoke } from '@tauri-apps/api/core';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { invoke } from '../lib/runtime/invoke';
+import { openUrl } from '../lib/runtime/opener';
 import {
   isPrivacyModeEnabledByDefault,
   maskSensitiveValue,

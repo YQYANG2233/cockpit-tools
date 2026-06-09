@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { invoke } from '../lib/runtime/invoke';
+import { listen, UnlistenFn } from '../lib/runtime/events';
+import { confirm as confirmDialog } from '../lib/runtime/dialog';
+import { openUrl } from '../lib/runtime/opener';
 import { ChevronLeft, ShieldCheck, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ModalErrorMessage, useModalErrorState } from '../components/ModalErrorMessage';

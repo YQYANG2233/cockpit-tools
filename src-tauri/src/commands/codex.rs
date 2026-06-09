@@ -1,6 +1,6 @@
 use crate::models::codex::{
     CodexAccount, CodexApiProviderMode, CodexAppSpeed, CodexAppSpeedConfig, CodexQuickConfig,
-    CodexQuota, CodexTokens,
+    CodexTokens,
 };
 use crate::models::codex_local_access::{
     CodexLocalAccessAccountModelRule, CodexLocalAccessChatMessage, CodexLocalAccessChatResult,
@@ -12,18 +12,28 @@ use crate::models::codex_local_access::{
     CodexLocalAccessTimeouts, CodexLocalAccessUsageEventPage,
 };
 use crate::modules::{
-    account, codex_account, codex_local_access, codex_oauth, codex_quota, codex_session_visibility,
-    codex_speed, codex_wakeup, codex_wakeup_scheduler, config, logger, openclaw_auth,
-    opencode_auth, process,
+    account, codex_account, codex_local_access, codex_oauth, codex_speed, codex_wakeup_scheduler,
+    config, logger, openclaw_auth, opencode_auth, process,
 };
+use cockpit_core::modules::{codex_quota, codex_wakeup};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
 use tauri::Emitter;
 use tauri_plugin_opener::OpenerExt;
 
 static CODEX_POST_REFRESH_CHECK_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+fn install_codex_batch_import_event_publisher(app: &AppHandle) {
+    let app = app.clone();
+    cockpit_core::modules::codex_account::set_codex_batch_import_event_publisher(Some(Arc::new(
+        move |event, payload| {
+            let _ = app.emit(event, payload);
+        },
+    )));
+}
 
 fn codex_launch_credential_kind_for_provider(provider: &str) -> &'static str {
     if provider == "openai" {
@@ -51,7 +61,9 @@ fn repair_codex_session_visibility_after_provider_change(
     }
 
     let started = Instant::now();
-    let summary = codex_session_visibility::repair_session_visibility_across_instances()?;
+    let summary =
+        cockpit_core::modules::codex_session_visibility::repair_session_visibility_across_instances(
+        )?;
     logger::log_info(&format!(
         "[Codex Session Visibility] {}: repaired after account switch, from_provider={}, to_provider={}, mutated_instances={}, rollout_files={}, sqlite_rows={}, elapsed_ms={}",
         context,
@@ -205,14 +217,20 @@ pub async fn switch_codex_account(
 ) -> Result<CodexAccount, String> {
     let codex_home = codex_account::get_codex_home();
     let previous_provider =
-        codex_session_visibility::read_history_visibility_provider_for_dir(&codex_home).ok();
+        cockpit_core::modules::codex_session_visibility::read_history_visibility_provider_for_dir(
+            &codex_home,
+        )
+        .ok();
 
     // 切换账号（写入 auth.json）
     let account = codex_account::switch_account_managed(&account_id).await?;
     repair_codex_session_visibility_after_provider_change(
         "switch-codex-account",
         previous_provider,
-        codex_session_visibility::read_history_visibility_provider_for_dir(&codex_home).ok(),
+        cockpit_core::modules::codex_session_visibility::read_history_visibility_provider_for_dir(
+            &codex_home,
+        )
+        .ok(),
     )?;
     let account_speed = account.app_speed.clone();
     codex_speed::write_official_app_speed(account_speed.clone())?;
@@ -454,38 +472,43 @@ pub async fn import_codex_from_files(
 pub fn start_codex_batch_import_from_files(
     app: AppHandle,
     file_paths: Vec<String>,
-) -> Result<codex_account::CodexBatchImportStartResult, String> {
-    codex_account::start_codex_batch_import_from_files(app, file_paths)
+) -> Result<cockpit_core::modules::codex_account::CodexBatchImportStartResult, String> {
+    install_codex_batch_import_event_publisher(&app);
+    cockpit_core::modules::codex_account::start_codex_batch_import_from_files(file_paths)
 }
 
 #[tauri::command]
 pub fn cancel_codex_batch_import(session_id: String) -> Result<(), String> {
-    codex_account::cancel_codex_batch_import(&session_id)
+    cockpit_core::modules::codex_account::cancel_codex_batch_import(&session_id)
 }
 
 #[tauri::command]
 pub fn resume_codex_batch_import(app: AppHandle, session_id: String) -> Result<(), String> {
-    codex_account::resume_codex_batch_import(app, &session_id)
+    install_codex_batch_import_event_publisher(&app);
+    cockpit_core::modules::codex_account::resume_codex_batch_import(&session_id)
 }
 
 #[tauri::command]
 pub fn get_codex_batch_import_preview(
     session_id: String,
-) -> Result<codex_account::CodexBatchImportPreview, String> {
-    codex_account::get_codex_batch_import_preview(&session_id)
+) -> Result<cockpit_core::modules::codex_account::CodexBatchImportPreview, String> {
+    cockpit_core::modules::codex_account::get_codex_batch_import_preview(&session_id)
 }
 
 #[tauri::command]
 pub fn confirm_codex_batch_import(
     session_id: String,
     item_ids: Vec<String>,
-) -> Result<codex_account::CodexBatchImportConfirmResult, String> {
-    codex_account::confirm_codex_batch_import(&session_id, &item_ids)
+) -> Result<cockpit_core::modules::codex_account::CodexBatchImportConfirmResult, String> {
+    cockpit_core::modules::codex_account::confirm_codex_batch_import(&session_id, &item_ids)
 }
 
 /// 刷新单个账号配额
 #[tauri::command]
-pub async fn refresh_codex_quota(app: AppHandle, account_id: String) -> Result<CodexQuota, String> {
+pub async fn refresh_codex_quota(
+    app: AppHandle,
+    account_id: String,
+) -> Result<cockpit_core::models::codex::CodexQuota, String> {
     let result = codex_quota::refresh_account_quota(&account_id).await;
     if result.is_ok() {
         run_codex_post_refresh_checks(&app).await;
@@ -498,7 +521,7 @@ pub async fn refresh_codex_quota(app: AppHandle, account_id: String) -> Result<C
 pub async fn refresh_codex_subscription_info(
     app: AppHandle,
     account_id: String,
-) -> Result<CodexAccount, String> {
+) -> Result<cockpit_core::models::codex::CodexAccount, String> {
     let result = codex_quota::refresh_account_subscription_info(&account_id, true).await;
     if result.is_ok() {
         let _ = crate::modules::tray::update_tray_menu(&app);
@@ -829,8 +852,8 @@ pub async fn codex_wakeup_test(
     run_id: Option<String>,
     cancel_scope_id: Option<String>,
 ) -> Result<codex_wakeup::CodexWakeupBatchResult, String> {
+    let app_for_progress = app.clone();
     codex_wakeup::run_batch(
-        Some(&app),
         account_ids,
         prompt,
         codex_wakeup::CodexWakeupExecutionConfig {
@@ -845,6 +868,9 @@ pub async fn codex_wakeup_test(
         },
         run_id,
         cancel_scope_id.as_deref(),
+        move |payload| {
+            let _ = app_for_progress.emit(codex_wakeup::PROGRESS_EVENT, payload);
+        },
     )
     .await
 }

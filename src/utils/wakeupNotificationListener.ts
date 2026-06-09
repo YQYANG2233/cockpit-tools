@@ -1,5 +1,5 @@
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { invoke } from '../lib/runtime/invoke';
+import { listen } from '../lib/runtime/events';
 
 interface NotificationAction {
   actionId: string;

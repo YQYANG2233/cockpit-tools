@@ -47,10 +47,10 @@ import {
   getQuotaClass,
   formatResetTimeDisplay,
 } from '../utils/account'
-import { listen, UnlistenFn } from '@tauri-apps/api/event'
-import { invoke } from '@tauri-apps/api/core'
-import { open as openFileDialog } from '@tauri-apps/plugin-dialog'
-import { openUrl } from '@tauri-apps/plugin-opener'
+import { listen, UnlistenFn } from '../lib/runtime/events'
+import { invoke } from '../lib/runtime/invoke'
+import { open as openFileDialog } from '../lib/runtime/dialog'
+import { openUrl } from '../lib/runtime/opener'
 import { TagEditModal } from '../components/TagEditModal'
 import { ExportJsonModal } from '../components/ExportJsonModal'
 import { PaginationControls } from '../components/PaginationControls'

@@ -1,7 +1,7 @@
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Instant;
 use tauri::Emitter;
@@ -16,6 +16,7 @@ const ACCOUNTS_DIR: &str = "workbuddy_accounts";
 const WORKBUDDY_QUOTA_ALERT_COOLDOWN_SECONDS: i64 = 10 * 60;
 const WORKBUDDY_SECRET_EXTENSION_ID: &str = "tencent-cloud.coding-copilot";
 const WORKBUDDY_SECRET_KEY: &str = "planning-genie.new.accessTokencn";
+const WORKBUDDY_AUTH_FILE_NAME: &str = "workbuddy-desktop.info";
 
 lazy_static::lazy_static! {
     static ref WORKBUDDY_ACCOUNT_INDEX_LOCK: Mutex<()> = Mutex::new(());
@@ -1007,6 +1008,56 @@ pub fn get_default_workbuddy_state_db_path() -> Option<PathBuf> {
         .map(|d| d.join("User").join("globalStorage").join("state.vscdb"))
 }
 
+fn get_workbuddy_shared_auth_dir() -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    #[cfg(target_os = "macos")]
+    {
+        return Some(
+            home.join("Library")
+                .join("Application Support")
+                .join("CodeBuddyExtension")
+                .join("Data")
+                .join("Public")
+                .join("auth"),
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return Some(
+            home.join("AppData")
+                .join("Local")
+                .join("CodeBuddyExtension")
+                .join("Data")
+                .join("Public")
+                .join("auth"),
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return Some(
+            home.join(".local")
+                .join("share")
+                .join("CodeBuddyExtension")
+                .join("Data")
+                .join("Public")
+                .join("auth"),
+        );
+    }
+
+    #[allow(unreachable_code)]
+    None
+}
+
+pub fn get_default_workbuddy_auth_file_path() -> Option<PathBuf> {
+    get_workbuddy_shared_auth_dir().map(|dir| dir.join(WORKBUDDY_AUTH_FILE_NAME))
+}
+
+fn workbuddy_logout_marker_path(auth_file: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.logged-out", auth_file.to_string_lossy()))
+}
+
 fn parse_local_access_token(value: &Value) -> Option<String> {
     match value {
         Value::String(s) => {
@@ -1215,6 +1266,217 @@ fn build_local_import_payload(
         status: Some("normal".to_string()),
         status_reason: None,
     }
+}
+
+fn build_default_auth_account_value(account: &WorkbuddyAccount) -> Value {
+    let mut account_obj = account
+        .profile_raw
+        .as_ref()
+        .and_then(|value| value.as_object())
+        .cloned()
+        .or_else(|| {
+            account
+                .auth_raw
+                .as_ref()
+                .and_then(|value| value.as_object())
+                .and_then(|obj| obj.get("account").and_then(|value| value.as_object()))
+                .cloned()
+        })
+        .unwrap_or_else(serde_json::Map::new);
+
+    if let Some(uid) = account
+        .uid
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        account_obj.insert("uid".to_string(), Value::String(uid.to_string()));
+    }
+    if let Some(nickname) = account
+        .nickname
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        account_obj.insert("nickname".to_string(), Value::String(nickname.to_string()));
+    }
+
+    account_obj
+        .entry("type".to_string())
+        .or_insert_with(|| Value::String("personal".to_string()));
+    account_obj
+        .entry("accountType".to_string())
+        .or_insert_with(|| Value::String(String::new()));
+    account_obj
+        .entry("idp".to_string())
+        .or_insert_with(|| Value::String(String::new()));
+    account_obj
+        .entry("oneidAccountId".to_string())
+        .or_insert_with(|| Value::String(String::new()));
+    account_obj
+        .entry("areaInfoComplete".to_string())
+        .or_insert_with(|| Value::Bool(false));
+    account_obj
+        .entry("isCurrentOneIdEnterprise".to_string())
+        .or_insert_with(|| Value::Bool(false));
+    account_obj
+        .entry("isFirstLogin".to_string())
+        .or_insert_with(|| Value::Bool(false));
+    account_obj.insert("lastLogin".to_string(), Value::Bool(true));
+    account_obj.insert("pluginEnabled".to_string(), Value::Bool(true));
+    account_obj
+        .entry("deployStatus".to_string())
+        .or_insert_with(|| {
+            serde_json::json!({
+                "statusCode": 0,
+                "statusMsg": "",
+                "detailMsg": ""
+            })
+        });
+    account_obj.entry("sso".to_string()).or_insert_with(|| {
+        serde_json::json!({
+            "domain": "",
+            "domainModifiedTimes": 0
+        })
+    });
+
+    Value::Object(account_obj)
+}
+
+fn seconds_until_ms(timestamp_ms: i64, now_ms: i64) -> i64 {
+    if timestamp_ms > now_ms {
+        (timestamp_ms - now_ms) / 1000
+    } else {
+        0
+    }
+}
+
+fn build_default_auth_value(account: &WorkbuddyAccount) -> Value {
+    let root_obj = account
+        .auth_raw
+        .as_ref()
+        .and_then(|value| value.as_object());
+    let raw_auth_obj = root_obj.and_then(|obj| obj.get("auth").and_then(|value| value.as_object()));
+    let mut auth_obj = raw_auth_obj
+        .cloned()
+        .or_else(|| {
+            root_obj
+                .filter(|obj| obj.contains_key("accessToken") || obj.contains_key("refreshToken"))
+                .cloned()
+        })
+        .unwrap_or_else(serde_json::Map::new);
+
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let refresh_token = account.refresh_token.as_deref().unwrap_or("");
+    let token_type = account.token_type.as_deref().unwrap_or("Bearer");
+    let domain = account.domain.as_deref().unwrap_or("");
+
+    auth_obj.insert(
+        "accessToken".to_string(),
+        Value::String(account.access_token.clone()),
+    );
+    auth_obj.insert(
+        "refreshToken".to_string(),
+        Value::String(refresh_token.to_string()),
+    );
+    auth_obj.insert(
+        "tokenType".to_string(),
+        Value::String(token_type.to_string()),
+    );
+    auth_obj.insert("domain".to_string(), Value::String(domain.to_string()));
+    auth_obj.insert(
+        "lastRefreshTime".to_string(),
+        Value::Number(serde_json::Number::from(now_ms)),
+    );
+
+    if let Some(expires_at) = account.expires_at {
+        auth_obj.insert(
+            "expiresAt".to_string(),
+            Value::Number(serde_json::Number::from(expires_at)),
+        );
+        auth_obj.insert(
+            "expiresIn".to_string(),
+            Value::Number(serde_json::Number::from(seconds_until_ms(
+                expires_at, now_ms,
+            ))),
+        );
+
+        let refresh_expires_at = raw_auth_obj
+            .and_then(|obj| json_object_i64_field(obj, &["refreshExpiresAt", "refresh_expires_at"]))
+            .unwrap_or(expires_at);
+        auth_obj.insert(
+            "refreshExpiresAt".to_string(),
+            Value::Number(serde_json::Number::from(refresh_expires_at)),
+        );
+        auth_obj.insert(
+            "refreshExpiresIn".to_string(),
+            Value::Number(serde_json::Number::from(seconds_until_ms(
+                refresh_expires_at,
+                now_ms,
+            ))),
+        );
+    } else {
+        auth_obj
+            .entry("expiresIn".to_string())
+            .or_insert_with(|| Value::Number(serde_json::Number::from(0)));
+        auth_obj
+            .entry("refreshExpiresIn".to_string())
+            .or_insert_with(|| Value::Number(serde_json::Number::from(0)));
+    }
+
+    auth_obj
+        .entry("scope".to_string())
+        .or_insert_with(|| Value::String("openid profile offline_access email".to_string()));
+
+    Value::Object(auth_obj)
+}
+
+fn build_default_client_auth_session(account: &WorkbuddyAccount) -> Value {
+    let account_value = build_default_auth_account_value(account);
+    serde_json::json!({
+        "account": account_value.clone(),
+        "auth": build_default_auth_value(account),
+        "accounts": [account_value],
+    })
+}
+
+pub fn write_account_to_default_client(account: &WorkbuddyAccount) -> Result<(), String> {
+    let auth_file = get_default_workbuddy_auth_file_path()
+        .ok_or_else(|| "unable to locate WorkBuddy default auth path".to_string())?;
+    let marker_path = workbuddy_logout_marker_path(&auth_file);
+    if marker_path.exists() {
+        fs::remove_file(&marker_path)
+            .map_err(|e| format!("failed to remove WorkBuddy logout marker: {e}"))?;
+    }
+
+    let session = build_default_client_auth_session(account);
+    let content = serde_json::to_string_pretty(&session)
+        .map_err(|e| format!("failed to serialize WorkBuddy auth session: {e}"))?;
+    crate::modules::atomic_write::write_string_atomic(&auth_file, &content)
+        .map_err(|e| format!("failed to write WorkBuddy auth session: {e}"))?;
+
+    let written = fs::read_to_string(&auth_file)
+        .map_err(|e| format!("failed to verify WorkBuddy auth session: {e}"))?;
+    let written_json: Value = serde_json::from_str(&written)
+        .map_err(|e| format!("failed to verify WorkBuddy auth JSON: {e}"))?;
+    let written_token = written_json
+        .get("auth")
+        .and_then(|auth| auth.get("accessToken"))
+        .and_then(|value| value.as_str());
+    if written_token != Some(account.access_token.as_str()) {
+        return Err(format!(
+            "failed to verify WorkBuddy auth session target account: {}",
+            auth_file.display()
+        ));
+    }
+
+    Ok(())
+}
+
+pub fn sync_account_to_default_client(account_id: &str) -> Result<(), String> {
+    let account = load_account(account_id)
+        .ok_or_else(|| format!("WorkBuddy account not found: {account_id}"))?;
+    write_account_to_default_client(&account)
 }
 
 pub fn import_payload_from_local() -> Result<Option<WorkbuddyOAuthCompletePayload>, String> {

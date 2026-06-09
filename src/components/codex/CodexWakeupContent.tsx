@@ -9,9 +9,9 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { invoke } from '@tauri-apps/api/core';
-import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog';
+import { listen, type UnlistenFn } from '../../lib/runtime/events';
+import { invoke } from '../../lib/runtime/invoke';
+import { confirm as confirmDialog } from '../../lib/runtime/dialog';
 import {
   Check,
   ChevronDown,

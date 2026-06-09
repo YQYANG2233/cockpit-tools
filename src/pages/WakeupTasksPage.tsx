@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { invoke } from '../lib/runtime/invoke';
+import { confirm as confirmDialog } from '../lib/runtime/dialog';
+import { openUrl } from '../lib/runtime/opener';
 import { ChevronLeft, Plus, Pencil, Trash2, Power, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useAccountStore } from '../stores/useAccountStore';

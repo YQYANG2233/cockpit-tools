@@ -9,7 +9,10 @@ use std::sync::LazyLock;
 use tracing::{error, info, warn};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-const LOG_FILE_PREFIX: &str = "app.log";
+const APP_LOG_FILE_PREFIX: &str = "app.log";
+const CODEX_API_LOG_FILE_PREFIX: &str = "codex-api.log";
+const CODEX_API_LOG_TARGET: &str = "codex_api";
+const MANAGED_LOG_FILE_PREFIXES: &[&str] = &[APP_LOG_FILE_PREFIX, CODEX_API_LOG_FILE_PREFIX];
 const LOG_RETENTION_DAYS: i64 = 3;
 const DEFAULT_LOG_TAIL_LINES: usize = 200;
 const MIN_LOG_TAIL_LINES: usize = 20;
@@ -40,10 +43,24 @@ pub fn get_log_dir() -> Result<PathBuf, String> {
     Ok(log_dir)
 }
 
+fn is_log_file_with_prefix(name: &str, prefix: &str) -> bool {
+    name == prefix
+        || name
+            .strip_prefix(prefix)
+            .map(|suffix| suffix.starts_with('.'))
+            .unwrap_or(false)
+}
+
+fn is_managed_log_file_name(name: &str) -> bool {
+    MANAGED_LOG_FILE_PREFIXES
+        .iter()
+        .any(|prefix| is_log_file_with_prefix(name, prefix))
+}
+
 fn is_app_log_file(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
-        .map(|name| name.starts_with(LOG_FILE_PREFIX))
+        .map(|name| is_log_file_with_prefix(name, APP_LOG_FILE_PREFIX))
         .unwrap_or(false)
 }
 
@@ -51,6 +68,66 @@ pub fn clamp_log_tail_lines(line_limit: Option<usize>) -> usize {
     line_limit
         .unwrap_or(DEFAULT_LOG_TAIL_LINES)
         .clamp(MIN_LOG_TAIL_LINES, MAX_LOG_TAIL_LINES)
+}
+
+fn list_log_files_by_name<F>(matcher: F) -> Result<Vec<PathBuf>, String>
+where
+    F: Fn(&str) -> bool,
+{
+    let log_dir = get_log_dir()?;
+    let entries = fs::read_dir(&log_dir).map_err(|e| format!("璇诲彇鏃ュ織鐩綍澶辫触: {}", e))?;
+
+    let mut paths = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("璇诲彇鏃ュ織鐩綍椤瑰け璐? {}", e))?;
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !path.is_file() || !matcher(name) {
+            continue;
+        }
+        paths.push(path);
+    }
+
+    paths.sort_by(compare_log_paths_by_recency);
+    Ok(paths)
+}
+
+fn compare_log_paths_by_recency(left: &PathBuf, right: &PathBuf) -> std::cmp::Ordering {
+    let left_modified = fs::metadata(left)
+        .and_then(|metadata| metadata.modified())
+        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+    let right_modified = fs::metadata(right)
+        .and_then(|metadata| metadata.modified())
+        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+
+    right_modified
+        .cmp(&left_modified)
+        .then_with(|| right.file_name().cmp(&left.file_name()))
+}
+
+pub fn list_managed_log_files() -> Result<Vec<PathBuf>, String> {
+    list_log_files_by_name(is_managed_log_file_name)
+}
+
+pub fn resolve_managed_log_file(file_name: Option<&str>) -> Result<PathBuf, String> {
+    let log_files = list_managed_log_files()?;
+    if log_files.is_empty() {
+        return Err("no managed log files found".to_string());
+    }
+
+    if let Some(file_name) = file_name.map(str::trim).filter(|name| !name.is_empty()) {
+        return log_files
+            .into_iter()
+            .find(|path| path.file_name().and_then(|name| name.to_str()) == Some(file_name))
+            .ok_or_else(|| format!("managed log file not found: {file_name}"));
+    }
+
+    log_files
+        .into_iter()
+        .next()
+        .ok_or_else(|| "no managed log files found".to_string())
 }
 
 pub fn get_latest_app_log_file() -> Result<PathBuf, String> {
@@ -255,6 +332,18 @@ pub fn log_warn(message: &str) {
 
 pub fn log_error(message: &str) {
     error!("{}", sanitize_message(message));
+}
+
+pub fn log_codex_api_info(message: &str) {
+    info!(target: CODEX_API_LOG_TARGET, "{}", sanitize_message(message));
+}
+
+pub fn log_codex_api_warn(message: &str) {
+    warn!(target: CODEX_API_LOG_TARGET, "{}", sanitize_message(message));
+}
+
+pub fn log_codex_api_error(message: &str) {
+    error!(target: CODEX_API_LOG_TARGET, "{}", sanitize_message(message));
 }
 
 fn sanitize_message(message: &str) -> String {

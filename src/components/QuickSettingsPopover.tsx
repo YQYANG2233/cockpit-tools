@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { createPortal } from 'react-dom';
-import { open } from '@tauri-apps/plugin-dialog';
-import { invoke } from '@tauri-apps/api/core';
+import { open } from '../lib/runtime/dialog';
+import { invoke } from '../lib/runtime/invoke';
 import { Settings, RefreshCw, FolderOpen, Zap, X } from 'lucide-react';
 import { useEscClose } from '../hooks/useEscClose';
 import * as accountService from '../services/accountService';

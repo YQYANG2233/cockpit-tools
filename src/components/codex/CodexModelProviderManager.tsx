@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
-import { homeDir, join } from "@tauri-apps/api/path";
+import { confirm as confirmDialog } from "../../lib/runtime/dialog";
+import { homeDir, join } from "../../lib/runtime/path";
 import {
   ArrowDownWideNarrow,
   ArrowDown,

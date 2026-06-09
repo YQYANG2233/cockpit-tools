@@ -2,13 +2,15 @@ use crate::models::github_copilot::{
     GitHubCopilotAccount, GitHubCopilotAccountIndex, GitHubCopilotOAuthCompletePayload,
 };
 use crate::modules::{account, github_copilot_oauth, logger};
+use rusqlite::Connection;
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 const ACCOUNTS_INDEX_FILE: &str = "github_copilot_accounts.json";
 const ACCOUNTS_DIR: &str = "github_copilot_accounts";
+const VSCODE_GHCP_CURRENT_LOGIN_KEY: &str = "github.copilot-github";
 static GHCP_ACCOUNT_INDEX_LOCK: std::sync::LazyLock<Mutex<()>> =
     std::sync::LazyLock::new(|| Mutex::new(()));
 static GHCP_QUOTA_ALERT_LAST_SENT: std::sync::LazyLock<Mutex<HashMap<String, i64>>> =
@@ -472,6 +474,138 @@ pub fn export_accounts(account_ids: &[String]) -> Result<String, String> {
         .filter_map(|id| load_account_file(id))
         .collect();
     serde_json::to_string_pretty(&accounts).map_err(|e| format!("序列化失败: {}", e))
+}
+
+fn read_vscdb_string_item(conn: &Connection, key: &str) -> Result<Option<String>, String> {
+    match conn.query_row("SELECT value FROM ItemTable WHERE key = ?1", [key], |row| {
+        row.get::<_, String>(0)
+    }) {
+        Ok(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(trimmed.to_string()))
+            }
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(error) => Err(format!("read VS Code local state failed: {}", error)),
+    }
+}
+
+fn read_local_copilot_github_login(db_path: &Path) -> Result<Option<String>, String> {
+    if !db_path.exists() {
+        return Ok(None);
+    }
+
+    let conn = Connection::open(db_path).map_err(|e| {
+        format!(
+            "open VS Code local state database failed ({}): {}",
+            db_path.display(),
+            e
+        )
+    })?;
+
+    read_vscdb_string_item(&conn, VSCODE_GHCP_CURRENT_LOGIN_KEY)
+}
+
+fn copilot_login_db_paths(data_root: &Path) -> Vec<PathBuf> {
+    let legacy_path = crate::modules::vscode_paths::vscode_state_db_path(data_root);
+
+    #[cfg(target_os = "windows")]
+    {
+        let mut paths = Vec::new();
+        if let Some(shared_path) =
+            crate::modules::vscode_paths::vscode_shared_storage_db_path(data_root)
+        {
+            paths.push(shared_path);
+        }
+        paths.push(legacy_path);
+        paths
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        vec![legacy_path]
+    }
+}
+
+fn read_local_copilot_github_login_from_data_root(
+    data_root: &Path,
+) -> Result<Option<(String, PathBuf)>, String> {
+    for db_path in copilot_login_db_paths(data_root) {
+        if let Some(login) = read_local_copilot_github_login(&db_path)? {
+            return Ok(Some((login, db_path)));
+        }
+    }
+
+    Ok(None)
+}
+
+fn github_session_account_field<'a>(
+    session: &'a serde_json::Value,
+    field: &str,
+) -> Option<&'a str> {
+    session
+        .get("account")
+        .and_then(|account| account.get(field))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn github_session_matches_login(session: &serde_json::Value, login: &str) -> bool {
+    github_session_account_field(session, "label") == Some(login)
+        || github_session_account_field(session, "id") == Some(login)
+}
+
+fn github_session_access_token(session: &serde_json::Value) -> Option<&str> {
+    session
+        .get("accessToken")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+pub async fn import_from_local() -> Result<Option<GitHubCopilotAccount>, String> {
+    let data_root = crate::modules::vscode_paths::resolve_vscode_data_root_for_state_db()?;
+
+    let (target_login, db_path) = match read_local_copilot_github_login_from_data_root(&data_root)?
+    {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+
+    let data_root_string = data_root.to_string_lossy().to_string();
+    let sessions = match crate::modules::vscode_inject::read_github_auth_sessions(Some(
+        data_root_string.as_str(),
+    ))? {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+
+    let access_token = sessions
+        .iter()
+        .find(|session| github_session_matches_login(session, &target_login))
+        .and_then(github_session_access_token)
+        .ok_or_else(|| {
+            format!(
+                "VS Code GitHub login session for current GitHub Copilot account was not found: {}",
+                target_login
+            )
+        })?
+        .to_string();
+
+    let payload =
+        github_copilot_oauth::build_payload_from_github_access_token(&access_token).await?;
+    let account = upsert_account(payload)?;
+    logger::log_info(&format!(
+        "[GitHub Copilot Account] imported from local VS Code successfully: id={}, login={}, db={}",
+        account.id,
+        account.github_login,
+        db_path.display()
+    ));
+    Ok(Some(account))
 }
 
 fn normalize_quota_alert_threshold(raw: i32) -> i32 {
