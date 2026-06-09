@@ -72,7 +72,7 @@ pub mod trae_instance;
 pub mod trae_oauth;
 // pub mod tray;
 pub mod tray_layout;
-// pub mod update_checker;
+pub mod update_checker;
 pub mod vscode_inject;
 pub mod vscode_paths;
 pub mod wakeup;

@@ -81,10 +81,6 @@ pub use cockpit_core::modules::auto_backup::{
     AutoBackupFileEntry, AutoBackupPlatformEntry, AutoBackupSettings, WebdavSyncSettings,
 };
 
-const DEFAULT_CHECK_INTERVAL_HOURS: u64 = 1;
-const UPDATE_SETTINGS_FILE: &str = "update_settings.json";
-const CHANGELOG_MARKDOWN_EN: &str = include_str!("../../../CHANGELOG.md");
-const CHANGELOG_MARKDOWN_ZH: &str = include_str!("../../../CHANGELOG.zh-CN.md");
 const CODEX_CONTEXT_WINDOW_1M_VALUE: i64 = 1_000_000;
 const CODEX_AUTO_COMPACT_DEFAULT_LIMIT: i64 = 900_000;
 const CODEX_CONFIG_MODEL_CONTEXT_WINDOW_KEY: &str = "model_context_window";
@@ -98,36 +94,6 @@ static WAKEUP_PENDING_CONFIRMATIONS: LazyLock<Mutex<HashMap<String, WakeupPendin
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static WAKEUP_OFFICIAL_LS_VERSION_MODE: LazyLock<Mutex<Option<String>>> =
     LazyLock::new(|| Mutex::new(None));
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateSettings {
-    pub auto_check: bool,
-    pub last_check_time: u64,
-    #[serde(default = "default_check_interval_hours")]
-    pub check_interval_hours: u64,
-    #[serde(default)]
-    pub auto_install: bool,
-    #[serde(default)]
-    pub last_run_version: String,
-    #[serde(default = "default_remind_on_update")]
-    pub remind_on_update: bool,
-    #[serde(default)]
-    pub skipped_version: String,
-}
-
-impl Default for UpdateSettings {
-    fn default() -> Self {
-        Self {
-            auto_check: true,
-            last_check_time: 0,
-            check_interval_hours: DEFAULT_CHECK_INTERVAL_HOURS,
-            auto_install: false,
-            last_run_version: String::new(),
-            remind_on_update: true,
-            skipped_version: String::new(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -189,43 +155,6 @@ struct WakeupPendingConfirmation {
 #[derive(Debug, Clone)]
 struct WakeupCronField {
     _values: HashSet<i32>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReleaseHistoryItem {
-    pub version: String,
-    pub date: String,
-    pub added: Vec<String>,
-    pub changed: Vec<String>,
-    pub fixed: Vec<String>,
-    pub removed: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VersionJumpInfo {
-    pub previous_version: String,
-    pub current_version: String,
-    pub release_notes: String,
-    pub release_notes_zh: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReleaseHistorySection {
-    Added,
-    Changed,
-    Fixed,
-    Removed,
-    Unknown,
-}
-
-fn default_check_interval_hours() -> u64 {
-    DEFAULT_CHECK_INTERVAL_HOURS
-}
-
-fn default_remind_on_update() -> bool {
-    true
 }
 
 static EVENT_SUBSCRIBERS: LazyLock<Mutex<Vec<mpsc::Sender<Vec<u8>>>>> =
@@ -792,98 +721,6 @@ fn save_data_file(file_name: &str, data: &str) -> Result<(), String> {
     std::fs::write(&path, data).map_err(|err| format!("write {file_name} failed: {err}"))
 }
 
-fn update_data_dir() -> Result<std::path::PathBuf, String> {
-    dirs::data_local_dir()
-        .map(|dir| dir.join("cockpit-tools"))
-        .ok_or_else(|| "failed to get local data directory".to_string())
-}
-
-fn ensure_update_data_dir() -> Result<std::path::PathBuf, String> {
-    let dir = update_data_dir()?;
-    fs::create_dir_all(&dir).map_err(|err| format!("create update data dir failed: {err}"))?;
-    Ok(dir)
-}
-
-fn update_settings_path() -> Result<std::path::PathBuf, String> {
-    Ok(update_data_dir()?.join(UPDATE_SETTINGS_FILE))
-}
-
-fn load_update_settings() -> Result<UpdateSettings, String> {
-    let path = update_settings_path()?;
-    if !path.exists() {
-        return Ok(UpdateSettings::default());
-    }
-    let content =
-        fs::read_to_string(&path).map_err(|err| format!("read update settings failed: {err}"))?;
-    let mut settings: UpdateSettings = serde_json::from_str(&content)
-        .map_err(|err| format!("parse update settings failed: {err}"))?;
-    if settings.check_interval_hours == 0
-        || settings.check_interval_hours == 6
-        || settings.check_interval_hours == 24
-    {
-        settings.check_interval_hours = DEFAULT_CHECK_INTERVAL_HOURS;
-        let _ = save_update_settings(&settings);
-    }
-    Ok(settings)
-}
-
-fn save_update_settings(settings: &UpdateSettings) -> Result<(), String> {
-    let dir = ensure_update_data_dir()?;
-    let path = dir.join(UPDATE_SETTINGS_FILE);
-    let content = serde_json::to_string_pretty(settings)
-        .map_err(|err| format!("serialize update settings failed: {err}"))?;
-    cockpit_core::modules::atomic_write::write_string_atomic(&path, &content)
-}
-
-fn update_last_check_time() -> Result<(), String> {
-    let mut settings = load_update_settings()?;
-    settings.last_check_time = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    save_update_settings(&settings)
-}
-
-fn should_check_updates() -> Result<bool, String> {
-    let settings = load_update_settings()?;
-    if !settings.auto_check {
-        return Ok(false);
-    }
-    if settings.last_check_time == 0 {
-        return Ok(true);
-    }
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    Ok(now.saturating_sub(settings.last_check_time)
-        >= settings.check_interval_hours.saturating_mul(3600))
-}
-
-fn compare_versions(new_version: &str, old_version: &str) -> bool {
-    let parse = |value: &str| {
-        value
-            .trim_start_matches('v')
-            .split('.')
-            .map(|part| part.parse::<u32>().unwrap_or(0))
-            .collect::<Vec<_>>()
-    };
-    let new_parts = parse(new_version);
-    let old_parts = parse(old_version);
-    let max_len = new_parts.len().max(old_parts.len());
-    for index in 0..max_len {
-        let new_part = *new_parts.get(index).unwrap_or(&0);
-        let old_part = *old_parts.get(index).unwrap_or(&0);
-        if new_part > old_part {
-            return true;
-        }
-        if new_part < old_part {
-            return false;
-        }
-    }
-    false
-}
-
 fn app_version() -> String {
     serde_json::from_str::<Value>(include_str!("../../../src-tauri/tauri.conf.json"))
         .ok()
@@ -914,112 +751,28 @@ pub fn application_version() -> String {
     app_version()
 }
 
-fn load_pending_update_notes() -> Result<Option<(String, String, String)>, String> {
-    let path = update_data_dir()?.join("pending_update_notes.json");
-    if !path.exists() {
-        return Ok(None);
-    }
-    let content = fs::read_to_string(&path)
-        .map_err(|err| format!("read pending update notes failed: {err}"))?;
-    let payload: Value = serde_json::from_str(&content)
-        .map_err(|err| format!("parse pending update notes failed: {err}"))?;
-    let version = payload
-        .get("version")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let release_notes = payload
-        .get("release_notes")
-        .or_else(|| payload.get("releaseNotes"))
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let release_notes_zh = payload
-        .get("release_notes_zh")
-        .or_else(|| payload.get("releaseNotesZh"))
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    Ok(Some((version, release_notes, release_notes_zh)))
+fn load_update_settings() -> Result<cockpit_core::modules::update_checker::UpdateSettings, String> {
+    cockpit_core::modules::update_checker::load_update_settings()
 }
 
-fn remove_pending_update_notes_file() {
-    let _ = fs::remove_file(
-        update_data_dir()
-            .unwrap_or_default()
-            .join("pending_update_notes.json"),
-    );
-}
-
-fn check_version_jump() -> Result<Option<VersionJumpInfo>, String> {
-    let mut settings = load_update_settings()?;
-    let current = app_version();
-    if settings.last_run_version.is_empty() || settings.last_run_version == current {
-        if settings.last_run_version != current {
-            settings.last_run_version = current;
-            save_update_settings(&settings)?;
-        }
-        return Ok(None);
-    }
-
-    let previous = settings.last_run_version.clone();
-    if !compare_versions(&current, &previous) {
-        settings.last_run_version = current;
-        save_update_settings(&settings)?;
-        return Ok(None);
-    }
-
-    let mut release_notes = String::new();
-    let mut release_notes_zh = String::new();
-    if let Some((pending_version, pending_notes, pending_notes_zh)) = load_pending_update_notes()? {
-        if pending_version == current {
-            release_notes = pending_notes;
-            release_notes_zh = pending_notes_zh;
-            remove_pending_update_notes_file();
-        } else if compare_versions(&current, &pending_version) {
-            remove_pending_update_notes_file();
-        }
-    }
-
-    settings.last_run_version = current.clone();
-    save_update_settings(&settings)?;
-    Ok(Some(VersionJumpInfo {
-        previous_version: previous,
-        current_version: current,
-        release_notes,
-        release_notes_zh,
-    }))
-}
-
-fn save_pending_update_notes_values(
-    version: String,
-    release_notes: String,
-    release_notes_zh: String,
+fn save_update_settings(
+    settings: &cockpit_core::modules::update_checker::UpdateSettings,
 ) -> Result<(), String> {
-    #[derive(Serialize)]
-    struct PendingUpdateNotes {
-        version: String,
-        release_notes: String,
-        release_notes_zh: String,
-    }
-
-    let payload = PendingUpdateNotes {
-        version,
-        release_notes,
-        release_notes_zh,
-    };
-    let dir = ensure_update_data_dir()?;
-    let path = dir.join("pending_update_notes.json");
-    let content = serde_json::to_string_pretty(&payload)
-        .map_err(|err| format!("serialize pending update notes failed: {err}"))?;
-    cockpit_core::modules::atomic_write::write_string_atomic(&path, &content)
+    cockpit_core::modules::update_checker::save_update_settings(settings)
 }
 
-fn save_pending_update_notes(params: &Value) -> Result<(), String> {
-    let version = param_string(params, &["version"])?;
-    let release_notes = param_string_or_empty(params, &["releaseNotes", "release_notes"])?;
-    let release_notes_zh = param_string_or_empty(params, &["releaseNotesZh", "release_notes_zh"])?;
-    save_pending_update_notes_values(version, release_notes, release_notes_zh)
+fn update_last_check_time() -> Result<(), String> {
+    cockpit_core::modules::update_checker::update_last_check_time()
+}
+
+fn should_check_updates() -> Result<bool, String> {
+    let settings = load_update_settings()?;
+    Ok(cockpit_core::modules::update_checker::should_check_for_updates(&settings))
+}
+
+fn check_version_jump(
+) -> Result<Option<cockpit_core::modules::update_checker::VersionJumpInfo>, String> {
+    cockpit_core::modules::update_checker::check_version_jump_for_version(&app_version())
 }
 
 fn update_log(params: &Value) -> Result<(), String> {
@@ -1042,105 +795,33 @@ fn update_log(params: &Value) -> Result<(), String> {
     Ok(())
 }
 
-fn release_history_markdown_for_locale(locale: Option<&str>) -> &'static str {
-    if locale
-        .unwrap_or("en")
-        .trim()
-        .to_ascii_lowercase()
-        .starts_with("zh")
-    {
-        CHANGELOG_MARKDOWN_ZH
-    } else {
-        CHANGELOG_MARKDOWN_EN
-    }
+fn save_pending_update_notes_values(
+    version: String,
+    release_notes: String,
+    release_notes_zh: String,
+) -> Result<(), String> {
+    cockpit_core::modules::update_checker::save_pending_update_notes(
+        version,
+        release_notes,
+        release_notes_zh,
+    )
 }
 
-fn parse_release_header(line: &str) -> Option<(String, String)> {
-    let body = line.strip_prefix("## [")?;
-    let end_bracket = body.find(']')?;
-    let version = body[..end_bracket].trim();
-    if version.is_empty() {
-        return None;
-    }
-    let tail = body[(end_bracket + 1)..].trim();
-    let date = tail
-        .strip_prefix('-')
-        .map(|value| value.trim().to_string())
-        .unwrap_or_default();
-    Some((version.to_string(), date))
-}
-
-fn parse_release_section(line: &str) -> Option<ReleaseHistorySection> {
-    let heading = line.strip_prefix("### ")?.trim().to_lowercase();
-    match heading.as_str() {
-        "added" | "新增" => Some(ReleaseHistorySection::Added),
-        "changed" | "变更" => Some(ReleaseHistorySection::Changed),
-        "fixed" | "修复" => Some(ReleaseHistorySection::Fixed),
-        "removed" | "移除" => Some(ReleaseHistorySection::Removed),
-        _ => Some(ReleaseHistorySection::Unknown),
-    }
-}
-
-fn parse_release_history_markdown(markdown: &str, limit: usize) -> Vec<ReleaseHistoryItem> {
-    let mut releases = Vec::new();
-    let mut current_release: Option<ReleaseHistoryItem> = None;
-    let mut current_section = ReleaseHistorySection::Unknown;
-    for raw_line in markdown.replace("\r\n", "\n").lines() {
-        let line = raw_line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if let Some((version, date)) = parse_release_header(line) {
-            if let Some(release) = current_release.take() {
-                releases.push(release);
-            }
-            current_release = Some(ReleaseHistoryItem {
-                version,
-                date,
-                added: Vec::new(),
-                changed: Vec::new(),
-                fixed: Vec::new(),
-                removed: Vec::new(),
-            });
-            current_section = ReleaseHistorySection::Unknown;
-            continue;
-        }
-        if let Some(section) = parse_release_section(line) {
-            current_section = section;
-            continue;
-        }
-        let Some(content) = line.strip_prefix("- ").map(str::trim) else {
-            continue;
-        };
-        if content.is_empty() {
-            continue;
-        }
-        let Some(release) = current_release.as_mut() else {
-            continue;
-        };
-        match current_section {
-            ReleaseHistorySection::Added => release.added.push(content.to_string()),
-            ReleaseHistorySection::Changed => release.changed.push(content.to_string()),
-            ReleaseHistorySection::Fixed => release.fixed.push(content.to_string()),
-            ReleaseHistorySection::Removed => release.removed.push(content.to_string()),
-            ReleaseHistorySection::Unknown => {}
-        }
-    }
-    if let Some(release) = current_release.take() {
-        releases.push(release);
-    }
-    releases.truncate(limit);
-    releases
+fn save_pending_update_notes(params: &Value) -> Result<(), String> {
+    let version = param_string(params, &["version"])?;
+    let release_notes = param_string_or_empty(params, &["releaseNotes", "release_notes"])?;
+    let release_notes_zh = param_string_or_empty(params, &["releaseNotesZh", "release_notes_zh"])?;
+    save_pending_update_notes_values(version, release_notes, release_notes_zh)
 }
 
 fn get_release_history(params: &Value) -> Result<Value, String> {
     let locale = param_optional_string(params, &["locale"])?;
-    let limit = param_optional_u64(params, &["limit"])?.unwrap_or(30);
-    let safe_limit = usize::try_from(limit.max(1).min(100)).unwrap_or(30);
-    let markdown = release_history_markdown_for_locale(locale.as_deref());
-    to_value_result(Ok::<_, String>(parse_release_history_markdown(
-        markdown, safe_limit,
-    )))
+    let limit =
+        param_optional_u64(params, &["limit"])?.and_then(|value| usize::try_from(value).ok());
+    to_value_result(cockpit_core::modules::update_checker::get_release_history(
+        locale.as_deref(),
+        limit,
+    ))
 }
 
 fn get_network_config() -> Result<cockpit_core::modules::config::NetworkConfig, String> {
@@ -7139,9 +6820,11 @@ pub fn handle_request(req: JsonRpcRequest, service_addr: &str) -> JsonRpcRespons
                 .and_then(|params| params.get("settings"))
                 .cloned()
                 .unwrap_or_else(|| req.params.clone());
-            let result = serde_json::from_value::<UpdateSettings>(payload)
-                .map_err(|err| format!("invalid update settings payload: {err}"))
-                .and_then(|settings| save_update_settings(&settings));
+            let result = serde_json::from_value::<
+                cockpit_core::modules::update_checker::UpdateSettings,
+            >(payload)
+            .map_err(|err| format!("invalid update settings payload: {err}"))
+            .and_then(|settings| save_update_settings(&settings));
             value_or_rpc_error::<()>(id, result)
         }
         "settings/update/last-check/update" => {

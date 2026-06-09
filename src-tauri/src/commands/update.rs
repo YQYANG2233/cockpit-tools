@@ -72,7 +72,7 @@ pub fn save_pending_update_notes(
 #[tauri::command]
 pub fn check_version_jump() -> Result<Option<VersionJumpInfo>, String> {
     let started = Instant::now();
-    let result = update_checker::check_version_jump();
+    let result = update_checker::check_version_jump_for_version(env!("CARGO_PKG_VERSION"));
     match &result {
         Ok(Some(info)) => logger::log_info(&format!(
             "[StartupPerf][UpdaterCommand] check_version_jump hit in {}ms: {} -> {}",
