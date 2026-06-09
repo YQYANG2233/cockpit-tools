@@ -5348,47 +5348,24 @@ fn inject_provider_account(platform: &str, account_id: &str) -> Result<Value, St
 }
 
 fn save_group_settings_from_params(params: &Value) -> Result<Value, String> {
-    let mut settings = cockpit_core::modules::group_settings::load_group_settings();
-    settings.group_mappings = param_string_map(params, "groupMappings")?;
-    settings.group_names = param_string_map(params, "groupNames")?;
-    settings.group_order = param_string_vec(params, &["groupOrder", "group_order"])?;
-    settings.updated_at = chrono::Utc::now().timestamp_millis();
-    settings.updated_by = cockpit_core::modules::group_settings::ConfigSource::Desktop;
-    to_value_result(cockpit_core::modules::group_settings::update_group_settings(settings))
+    to_value_result(
+        cockpit_core::modules::group_settings::replace_group_settings(
+            param_string_map(params, "groupMappings")?,
+            param_string_map(params, "groupNames")?,
+            param_string_vec(params, &["groupOrder", "group_order"])?,
+        ),
+    )
 }
 
 fn mutate_group_settings<F>(mutator: F) -> Result<Value, String>
 where
     F: FnOnce(&mut cockpit_core::modules::group_settings::GroupSettings),
 {
-    let mut settings = cockpit_core::modules::group_settings::load_group_settings();
-    mutator(&mut settings);
-    to_value_result(cockpit_core::modules::group_settings::update_group_settings(settings))
+    to_value_result(cockpit_core::modules::group_settings::mutate_group_settings(mutator))
 }
 
 fn get_display_groups() -> Value {
-    let settings = cockpit_core::modules::group_settings::load_group_settings();
-    let groups: Vec<Value> = settings
-        .group_order
-        .iter()
-        .take(3)
-        .map(|group_id| {
-            let mut models = settings
-                .group_mappings
-                .iter()
-                .filter_map(|(model_id, mapped_group_id)| {
-                    (mapped_group_id == group_id).then(|| model_id.clone())
-                })
-                .collect::<Vec<_>>();
-            models.sort();
-            json!({
-                "id": group_id,
-                "name": settings.group_names.get(group_id).cloned().unwrap_or_else(|| group_id.clone()),
-                "models": models
-            })
-        })
-        .collect();
-    Value::Array(groups)
+    json!(cockpit_core::modules::group_settings::get_display_groups())
 }
 
 fn delete_corrupted_file(params: &Value) -> Result<(), String> {
