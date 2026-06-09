@@ -43,6 +43,68 @@ fn normalize_platform(platform: &str) -> Result<&'static str, String> {
     }
 }
 
+pub fn normalize_provider_platform(platform: &str) -> Result<&'static str, String> {
+    normalize_platform(platform)
+}
+
+pub fn resolve_provider_current_account_id(platform: &str) -> Result<Option<String>, String> {
+    match normalize_platform(platform)? {
+        "windsurf" => {
+            let accounts = crate::modules::windsurf_account::list_accounts();
+            Ok(crate::modules::windsurf_account::resolve_current_account_id(&accounts))
+        }
+        "kiro" => {
+            let accounts = crate::modules::kiro_account::list_accounts();
+            Ok(crate::modules::kiro_account::resolve_current_account_id(
+                &accounts,
+            ))
+        }
+        "cursor" => {
+            let accounts = crate::modules::cursor_account::list_accounts();
+            Ok(crate::modules::cursor_account::resolve_current_account_id(
+                &accounts,
+            ))
+        }
+        "gemini" => {
+            let accounts = crate::modules::gemini_account::list_accounts();
+            Ok(
+                crate::modules::gemini_account::resolve_current_account(&accounts)
+                    .map(|account| account.id),
+            )
+        }
+        "codebuddy" => {
+            let accounts = crate::modules::codebuddy_account::list_accounts();
+            Ok(crate::modules::codebuddy_account::resolve_current_account_id(&accounts))
+        }
+        "codebuddy_cn" => {
+            let accounts = crate::modules::codebuddy_cn_account::list_accounts();
+            Ok(crate::modules::codebuddy_cn_account::resolve_current_account_id(&accounts))
+        }
+        "qoder" => {
+            let accounts = crate::modules::qoder_account::list_accounts();
+            Ok(crate::modules::qoder_account::resolve_current_account_id(
+                &accounts,
+            ))
+        }
+        "trae" => {
+            let accounts = crate::modules::trae_account::list_accounts();
+            Ok(crate::modules::trae_account::resolve_current_account_id(
+                &accounts,
+            ))
+        }
+        "workbuddy" => {
+            let accounts = crate::modules::workbuddy_account::list_accounts();
+            Ok(crate::modules::workbuddy_account::resolve_current_account_id(&accounts))
+        }
+        "github_copilot" => {
+            let accounts = crate::modules::github_copilot_account::list_accounts();
+            Ok(crate::modules::github_copilot_account::resolve_current_account_id(&accounts))
+        }
+        "zed" => Ok(crate::modules::zed_account::resolve_current_account_id()),
+        other => Err(format!("unsupported platform: {other}")),
+    }
+}
+
 fn state_path() -> Result<PathBuf, String> {
     Ok(crate::modules::account::get_data_dir()?.join(PROVIDER_CURRENT_STATE_FILE))
 }
@@ -110,4 +172,35 @@ pub fn set_current_account_id(platform: &str, account_id: Option<&str>) -> Resul
         state.current_accounts.remove(key);
     }
     save_state(&state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_provider_platform;
+
+    #[test]
+    fn normalizes_provider_platform_aliases() {
+        assert_eq!(
+            normalize_provider_platform("github-copilot").unwrap(),
+            "github_copilot"
+        );
+        assert_eq!(
+            normalize_provider_platform("github_copilot").unwrap(),
+            "github_copilot"
+        );
+        assert_eq!(
+            normalize_provider_platform("ghcp").unwrap(),
+            "github_copilot"
+        );
+        assert_eq!(
+            normalize_provider_platform("codebuddy-cn").unwrap(),
+            "codebuddy_cn"
+        );
+        assert_eq!(
+            normalize_provider_platform("codebuddy_cn").unwrap(),
+            "codebuddy_cn"
+        );
+        assert_eq!(normalize_provider_platform(" zed ").unwrap(), "zed");
+        assert!(normalize_provider_platform("unknown").is_err());
+    }
 }

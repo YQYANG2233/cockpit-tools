@@ -4154,82 +4154,8 @@ fn handle_instance_method(method: &str, params: &Value) -> Result<Option<Value>,
     Ok(Some(value))
 }
 
-fn normalize_provider_platform(platform: &str) -> Result<&'static str, String> {
-    match platform.trim() {
-        "windsurf" => Ok("windsurf"),
-        "kiro" => Ok("kiro"),
-        "cursor" => Ok("cursor"),
-        "gemini" => Ok("gemini"),
-        "codebuddy" => Ok("codebuddy"),
-        "codebuddy_cn" | "codebuddy-cn" => Ok("codebuddy_cn"),
-        "qoder" => Ok("qoder"),
-        "trae" => Ok("trae"),
-        "workbuddy" => Ok("workbuddy"),
-        "github_copilot" | "github-copilot" | "ghcp" => Ok("github_copilot"),
-        "zed" => Ok("zed"),
-        other => Err(format!("unsupported platform: {other}")),
-    }
-}
-
-fn provider_account_ids(platform: &str) -> Result<Vec<String>, String> {
-    Ok(match platform {
-        "windsurf" => cockpit_core::modules::windsurf_account::list_accounts()
-            .into_iter()
-            .map(|account| account.id)
-            .collect(),
-        "kiro" => cockpit_core::modules::kiro_account::list_accounts()
-            .into_iter()
-            .map(|account| account.id)
-            .collect(),
-        "cursor" => cockpit_core::modules::cursor_account::list_accounts()
-            .into_iter()
-            .map(|account| account.id)
-            .collect(),
-        "gemini" => cockpit_core::modules::gemini_account::list_accounts()
-            .into_iter()
-            .map(|account| account.id)
-            .collect(),
-        "codebuddy" => cockpit_core::modules::codebuddy_account::list_accounts()
-            .into_iter()
-            .map(|account| account.id)
-            .collect(),
-        "codebuddy_cn" => cockpit_core::modules::codebuddy_cn_account::list_accounts()
-            .into_iter()
-            .map(|account| account.id)
-            .collect(),
-        "qoder" => cockpit_core::modules::qoder_account::list_accounts()
-            .into_iter()
-            .map(|account| account.id)
-            .collect(),
-        "trae" => cockpit_core::modules::trae_account::list_accounts()
-            .into_iter()
-            .map(|account| account.id)
-            .collect(),
-        "workbuddy" => cockpit_core::modules::workbuddy_account::list_accounts()
-            .into_iter()
-            .map(|account| account.id)
-            .collect(),
-        "github_copilot" => cockpit_core::modules::github_copilot_account::list_accounts()
-            .into_iter()
-            .map(|account| account.id)
-            .collect(),
-        "zed" => cockpit_core::modules::zed_account::list_accounts()
-            .into_iter()
-            .map(|account| account.id)
-            .collect(),
-        other => return Err(format!("unsupported platform: {other}")),
-    })
-}
-
 fn get_provider_current_account_id(platform: &str) -> Result<Option<String>, String> {
-    let key = normalize_provider_platform(platform)?;
-    let ids = provider_account_ids(key)?;
-    Ok(
-        cockpit_core::modules::provider_current_state::resolve_existing_current_account_id(
-            key,
-            ids.iter().map(String::as_str),
-        ),
-    )
+    cockpit_core::modules::provider_current_state::resolve_provider_current_account_id(platform)
 }
 
 fn add_antigravity_account_from_refresh_token(params: &Value) -> Result<Value, String> {
