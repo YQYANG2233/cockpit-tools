@@ -657,7 +657,14 @@ fn normalize_account_index(index: &mut KiroAccountIndex) -> Vec<KiroAccount> {
 
 pub fn list_accounts() -> Vec<KiroAccount> {
     let mut index = load_account_index();
+    let had_index_accounts = !index.accounts.is_empty();
     let accounts = normalize_account_index(&mut index);
+    if had_index_accounts && accounts.is_empty() {
+        logger::log_warn(
+            "[Kiro Account] 账号索引中存在账号，但详情文件均无法读取，已跳过空索引写回",
+        );
+        return accounts;
+    }
     if let Err(err) = save_account_index(&index) {
         logger::log_warn(&format!("[Kiro Account] 保存账号索引失败: {}", err));
     }
@@ -666,7 +673,11 @@ pub fn list_accounts() -> Vec<KiroAccount> {
 
 pub fn list_accounts_checked() -> Result<Vec<KiroAccount>, String> {
     let mut index = load_account_index_checked()?;
+    let had_index_accounts = !index.accounts.is_empty();
     let accounts = normalize_account_index(&mut index);
+    if had_index_accounts && accounts.is_empty() {
+        return Err("Kiro 账号索引中存在账号，但详情文件均无法读取；已保留前端缓存，请从账号备份或本地账号文件恢复。".to_string());
+    }
     if let Err(err) = save_account_index(&index) {
         logger::log_warn(&format!("[Kiro Account] 保存账号索引失败: {}", err));
     }
@@ -1199,48 +1210,11 @@ fn average_quota_percentage(metrics: &[(String, i32)]) -> f64 {
     sum as f64 / metrics.len() as f64
 }
 
-pub(crate) fn resolve_current_account_id(accounts: &[KiroAccount]) -> Option<String> {
-    if let Ok(local_payload) = crate::modules::kiro_oauth::build_payload_from_local_files() {
-        let incoming_user_id = normalize_user_identity(local_payload.user_id.as_deref());
-        let incoming_email = normalize_email_identity(Some(local_payload.email.as_str()));
-        let incoming_refresh_token =
-            normalize_token_identity(local_payload.refresh_token.as_deref());
-
-        if let Some(account_id) = accounts
-            .iter()
-            .find(|account| {
-                let existing_user = normalize_user_identity(account.user_id.as_deref());
-                let existing_email = normalize_email_identity(Some(account.email.as_str()));
-                let existing_refresh_token =
-                    normalize_token_identity(account.refresh_token.as_deref());
-                account_matches_payload_identity(
-                    existing_user.as_ref(),
-                    existing_email.as_ref(),
-                    existing_refresh_token.as_ref(),
-                    incoming_user_id.as_ref(),
-                    incoming_email.as_ref(),
-                    incoming_refresh_token.as_ref(),
-                )
-            })
-            .map(|account| account.id.clone())
-        {
-            return Some(account_id);
-        }
-    }
-
-    if let Ok(settings) = crate::modules::kiro_instance::load_default_settings() {
-        if let Some(bind_id) = settings.bind_account_id {
-            let trimmed = bind_id.trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
-            }
-        }
-    }
-
-    accounts
-        .iter()
-        .max_by_key(|account| account.last_used)
-        .map(|account| account.id.clone())
+pub fn resolve_current_account_id(accounts: &[KiroAccount]) -> Option<String> {
+    crate::modules::provider_current_state::resolve_existing_current_account_id(
+        "kiro",
+        accounts.iter().map(|account| account.id.as_str()),
+    )
 }
 
 fn display_email(account: &KiroAccount) -> String {
