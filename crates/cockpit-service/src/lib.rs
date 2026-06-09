@@ -5726,10 +5726,14 @@ fn handle_provider_account_method(method: &str, params: &Value) -> Result<Option
             ))
         }
         "announcement/state/get" => to_value_result(block_on(
-            cockpit_core::modules::announcement::get_announcement_state(),
+            cockpit_core::modules::announcement::get_announcement_state_for_version(
+                &application_version(),
+            ),
         )),
         "announcement/state/force-refresh" => to_value_result(block_on(
-            cockpit_core::modules::announcement::force_refresh_announcements(),
+            cockpit_core::modules::announcement::force_refresh_announcements_for_version(
+                &application_version(),
+            ),
         )),
         "announcement/read/mark" => {
             let id = param_string(params, &["id"])?;
@@ -5738,14 +5742,25 @@ fn handle_provider_account_method(method: &str, params: &Value) -> Result<Option
             ))
         }
         "announcement/read/mark-all" => to_value_result(block_on(
-            cockpit_core::modules::announcement::mark_all_announcements_as_read(),
+            cockpit_core::modules::announcement::mark_all_announcements_as_read_for_version(
+                &application_version(),
+            ),
         )),
         "announcement/top-right-ad/get" => to_value_result(block_on(
-            cockpit_core::modules::announcement::get_top_right_ad_state(),
+            cockpit_core::modules::announcement::get_top_right_ad_state_for_version(
+                &application_version(),
+            ),
         )),
-        "announcement/sponsor-module/get" | "announcement/sponsor-module/force-refresh" => {
-            Ok(json!({ "sponsorModule": null }))
-        }
+        "announcement/sponsor-module/get" => to_value_result(block_on(
+            cockpit_core::modules::announcement::get_sponsor_module_state_for_version(
+                &application_version(),
+            ),
+        )),
+        "announcement/sponsor-module/force-refresh" => to_value_result(block_on(
+            cockpit_core::modules::announcement::force_refresh_sponsor_module_for_version(
+                &application_version(),
+            ),
+        )),
         "antigravity/switch-history/load" => {
             to_value_result(cockpit_core::modules::antigravity_switch_history::load_history())
         }
@@ -7669,6 +7684,27 @@ mod tests {
         let items = result.as_array().expect("instance list should be an array");
         assert!(items.iter().any(|item| item["isDefault"] == true));
         assert!(items.iter().all(|item| item.get("running").is_some()));
+    }
+
+    #[test]
+    fn legacy_sponsor_module_command_uses_core_announcement_rpc() {
+        let response = handle_request(
+            JsonRpcRequest {
+                jsonrpc: "2.0".to_string(),
+                id: json!("sponsor-module"),
+                method: "announcement_get_sponsor_module".to_string(),
+                params: Value::Null,
+            },
+            DEFAULT_ADDR,
+        );
+        assert!(response.error.is_none());
+        let result = response
+            .result
+            .expect("sponsor module should return a result");
+        assert!(
+            result.get("sponsorModule").is_some(),
+            "result should preserve frontend SponsorModuleState shape"
+        );
     }
 
     #[test]
