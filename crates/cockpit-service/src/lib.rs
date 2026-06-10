@@ -5190,16 +5190,23 @@ async fn rpc_handler(
     axum::extract::State(service_addr): axum::extract::State<String>,
     body: String,
 ) -> impl axum::response::IntoResponse {
-    match handle_json_rpc_body(&body, &service_addr) {
-        Ok(body) => (
+    // Run RPC handler in blocking thread pool (like Codex-Manager)
+    // This prevents blocking operations (network I/O) from blocking the async runtime
+    match tokio::task::spawn_blocking(move || handle_json_rpc_body(&body, &service_addr)).await {
+        Ok(Ok(body)) => (
             axum::http::StatusCode::OK,
             [(axum::http::header::CONTENT_TYPE, "application/json")],
             body,
         ),
-        Err(err) => (
+        Ok(Err(err)) => (
             axum::http::StatusCode::BAD_REQUEST,
             [(axum::http::header::CONTENT_TYPE, "application/json")],
             json!({ "error": err }).to_string(),
+        ),
+        Err(err) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            json!({ "error": format!("task join error: {err}") }).to_string(),
         ),
     }
 }
