@@ -19,6 +19,7 @@ mod logs;
 mod params;
 mod platform_def;
 mod platform_dispatch;
+mod platform_hooks;
 mod rpc_catalog;
 mod rpc_types;
 mod settings;
@@ -421,35 +422,7 @@ fn resolve_instance_pid_for_platform(
     last_pid: Option<u32>,
     user_data_dir: Option<&str>,
 ) -> Option<u32> {
-    match platform {
-        "antigravity" => {
-            cockpit_core::modules::process::resolve_antigravity_pid(last_pid, user_data_dir)
-        }
-        "codex" => cockpit_core::modules::process::resolve_codex_pid(last_pid, user_data_dir),
-        "github_copilot" => {
-            cockpit_core::modules::process::resolve_vscode_pid(last_pid, user_data_dir)
-        }
-        "windsurf" => {
-            cockpit_core::modules::windsurf_instance::resolve_windsurf_pid(last_pid, user_data_dir)
-        }
-        "kiro" => cockpit_core::modules::kiro_instance::resolve_kiro_pid(last_pid, user_data_dir),
-        "cursor" => {
-            cockpit_core::modules::cursor_instance::resolve_cursor_pid(last_pid, user_data_dir)
-        }
-        "codebuddy" => {
-            cockpit_core::modules::process::resolve_codebuddy_pid(last_pid, user_data_dir)
-        }
-        "codebuddy_cn" => {
-            cockpit_core::modules::process::resolve_codebuddy_cn_pid(last_pid, user_data_dir)
-        }
-        "workbuddy" => {
-            cockpit_core::modules::process::resolve_workbuddy_pid(last_pid, user_data_dir)
-        }
-        "gemini" | "qoder" | "trae" => {
-            last_pid.filter(|pid| cockpit_core::modules::process::is_pid_running(*pid))
-        }
-        _ => None,
-    }
+    platform_hooks::resolve_instance_pid_for_platform(platform, last_pid, user_data_dir)
 }
 
 fn close_instance_process_for_platform(
@@ -457,34 +430,7 @@ fn close_instance_process_for_platform(
     last_pid: Option<u32>,
     user_data_dir: Option<&str>,
 ) -> Result<(), String> {
-    let dirs = user_data_dir
-        .map(|dir| vec![dir.to_string()])
-        .unwrap_or_default();
-    match platform {
-        "antigravity" if !dirs.is_empty() => {
-            cockpit_core::modules::process::close_antigravity_instances(&dirs, 20)
-        }
-        "codex" if !dirs.is_empty() => {
-            cockpit_core::modules::process::close_codex_instances(&dirs, 20)
-        }
-        "github_copilot" if !dirs.is_empty() => {
-            cockpit_core::modules::process::close_vscode(&dirs, 20)
-        }
-        "windsurf" if !dirs.is_empty() => {
-            cockpit_core::modules::windsurf_instance::close_windsurf(&dirs, 20)
-        }
-        "kiro" if !dirs.is_empty() => cockpit_core::modules::kiro_instance::close_kiro(&dirs, 20),
-        "cursor" if !dirs.is_empty() => {
-            cockpit_core::modules::cursor_instance::close_cursor(&dirs, 20)
-        }
-        _ => {
-            if let Some(pid) = resolve_instance_pid_for_platform(platform, last_pid, user_data_dir)
-            {
-                cockpit_core::modules::process::close_pid(pid, 20)?;
-            }
-            Ok(())
-        }
-    }
+    platform_hooks::close_instance_process_for_platform(platform, last_pid, user_data_dir)
 }
 
 fn stop_instance_for_platform(platform: &str, params: &Value) -> Result<Value, String> {
@@ -645,27 +591,7 @@ fn close_all_instances_for_platform(platform: &str) -> Result<Value, String> {
 }
 
 fn ensure_launch_path_for_platform(platform: &str) -> Result<(), String> {
-    match platform {
-        "antigravity" => {
-            cockpit_core::modules::process::ensure_antigravity_launch_path_configured()
-        }
-        "codex" => cockpit_core::modules::process::ensure_codex_launch_path_configured(),
-        "github_copilot" => cockpit_core::modules::process::ensure_vscode_launch_path_configured(),
-        "windsurf" => {
-            cockpit_core::modules::windsurf_instance::ensure_windsurf_launch_path_configured()
-        }
-        "kiro" => cockpit_core::modules::kiro_instance::ensure_kiro_launch_path_configured(),
-        "cursor" => cockpit_core::modules::cursor_instance::ensure_cursor_launch_path_configured(),
-        "codebuddy" => cockpit_core::modules::process::ensure_codebuddy_launch_path_configured(),
-        "codebuddy_cn" => {
-            cockpit_core::modules::process::ensure_codebuddy_cn_launch_path_configured()
-        }
-        "qoder" => cockpit_core::modules::process::ensure_qoder_launch_path_configured(),
-        "trae" => cockpit_core::modules::process::ensure_trae_launch_path_configured(),
-        "workbuddy" => cockpit_core::modules::process::ensure_workbuddy_launch_path_configured(),
-        "gemini" => Ok(()),
-        other => Err(format!("unsupported instance platform: {other}")),
-    }
+    platform_hooks::ensure_launch_path_for_platform(platform)
 }
 
 fn default_bind_account_id_for_platform(
