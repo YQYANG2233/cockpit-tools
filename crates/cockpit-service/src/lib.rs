@@ -383,42 +383,14 @@ fn install_linux_update(params: &Value) -> Result<(), String> {
 fn load_default_settings_for_platform(
     platform: &str,
 ) -> Result<cockpit_core::models::DefaultInstanceSettings, String> {
-    match platform {
-        "antigravity" => cockpit_core::modules::instance::load_default_settings(),
-        "codex" => cockpit_core::modules::codex_instance::load_default_settings(),
-        "github_copilot" => cockpit_core::modules::github_copilot_instance::load_default_settings(),
-        "windsurf" => cockpit_core::modules::windsurf_instance::load_default_settings(),
-        "kiro" => cockpit_core::modules::kiro_instance::load_default_settings(),
-        "cursor" => cockpit_core::modules::cursor_instance::load_default_settings(),
-        "gemini" => cockpit_core::modules::gemini_instance::load_default_settings(),
-        "codebuddy" => cockpit_core::modules::codebuddy_instance::load_default_settings(),
-        "codebuddy_cn" => cockpit_core::modules::codebuddy_cn_instance::load_default_settings(),
-        "qoder" => cockpit_core::modules::qoder_instance::load_default_settings(),
-        "trae" => cockpit_core::modules::trae_instance::load_default_settings(),
-        "workbuddy" => cockpit_core::modules::workbuddy_instance::load_default_settings(),
-        other => Err(format!("unsupported instance platform: {other}")),
-    }
+    platform_dispatch::load_default_settings_for_platform(platform)
 }
 
 fn update_default_pid_for_platform(
     platform: &str,
     pid: Option<u32>,
 ) -> Result<cockpit_core::models::DefaultInstanceSettings, String> {
-    match platform {
-        "antigravity" => cockpit_core::modules::instance::update_default_pid(pid),
-        "codex" => cockpit_core::modules::codex_instance::update_default_pid(pid),
-        "github_copilot" => cockpit_core::modules::github_copilot_instance::update_default_pid(pid),
-        "windsurf" => cockpit_core::modules::windsurf_instance::update_default_pid(pid),
-        "kiro" => cockpit_core::modules::kiro_instance::update_default_pid(pid),
-        "cursor" => cockpit_core::modules::cursor_instance::update_default_pid(pid),
-        "gemini" => cockpit_core::modules::gemini_instance::update_default_pid(pid),
-        "codebuddy" => cockpit_core::modules::codebuddy_instance::update_default_pid(pid),
-        "codebuddy_cn" => cockpit_core::modules::codebuddy_cn_instance::update_default_pid(pid),
-        "qoder" => cockpit_core::modules::qoder_instance::update_default_pid(pid),
-        "trae" => cockpit_core::modules::trae_instance::update_default_pid(pid),
-        "workbuddy" => cockpit_core::modules::workbuddy_instance::update_default_pid(pid),
-        other => Err(format!("unsupported instance platform: {other}")),
-    }
+    platform_dispatch::update_default_pid_for_platform(platform, pid)
 }
 
 fn update_instance_pid_for_platform(
@@ -426,49 +398,11 @@ fn update_instance_pid_for_platform(
     instance_id: &str,
     pid: Option<u32>,
 ) -> Result<cockpit_core::models::InstanceProfile, String> {
-    match platform {
-        "antigravity" => cockpit_core::modules::instance::update_instance_pid(instance_id, pid),
-        "codex" => cockpit_core::modules::codex_instance::update_instance_pid(instance_id, pid),
-        "github_copilot" => {
-            cockpit_core::modules::github_copilot_instance::update_instance_pid(instance_id, pid)
-        }
-        "windsurf" => {
-            cockpit_core::modules::windsurf_instance::update_instance_pid(instance_id, pid)
-        }
-        "kiro" => cockpit_core::modules::kiro_instance::update_instance_pid(instance_id, pid),
-        "cursor" => cockpit_core::modules::cursor_instance::update_instance_pid(instance_id, pid),
-        "gemini" => cockpit_core::modules::gemini_instance::update_instance_pid(instance_id, pid),
-        "codebuddy" => {
-            cockpit_core::modules::codebuddy_instance::update_instance_pid(instance_id, pid)
-        }
-        "codebuddy_cn" => {
-            cockpit_core::modules::codebuddy_cn_instance::update_instance_pid(instance_id, pid)
-        }
-        "qoder" => cockpit_core::modules::qoder_instance::update_instance_pid(instance_id, pid),
-        "trae" => cockpit_core::modules::trae_instance::update_instance_pid(instance_id, pid),
-        "workbuddy" => {
-            cockpit_core::modules::workbuddy_instance::update_instance_pid(instance_id, pid)
-        }
-        other => Err(format!("unsupported instance platform: {other}")),
-    }
+    platform_dispatch::update_instance_pid_for_platform(platform, instance_id, pid)
 }
 
 fn clear_all_pids_for_platform(platform: &str) -> Result<(), String> {
-    match platform {
-        "antigravity" => cockpit_core::modules::instance::clear_all_pids(),
-        "codex" => cockpit_core::modules::codex_instance::clear_all_pids(),
-        "github_copilot" => cockpit_core::modules::github_copilot_instance::clear_all_pids(),
-        "windsurf" => cockpit_core::modules::windsurf_instance::clear_all_pids(),
-        "kiro" => cockpit_core::modules::kiro_instance::clear_all_pids(),
-        "cursor" => cockpit_core::modules::cursor_instance::clear_all_pids(),
-        "gemini" => cockpit_core::modules::gemini_instance::clear_all_pids(),
-        "codebuddy" => cockpit_core::modules::codebuddy_instance::clear_all_pids(),
-        "codebuddy_cn" => cockpit_core::modules::codebuddy_cn_instance::clear_all_pids(),
-        "qoder" => cockpit_core::modules::qoder_instance::clear_all_pids(),
-        "trae" => cockpit_core::modules::trae_instance::clear_all_pids(),
-        "workbuddy" => cockpit_core::modules::workbuddy_instance::clear_all_pids(),
-        other => Err(format!("unsupported instance platform: {other}")),
-    }
+    platform_dispatch::clear_all_pids_for_platform(platform)
 }
 
 fn find_instance_for_platform(
@@ -1590,83 +1524,17 @@ fn normalize_instance_platform(platform: &str) -> Result<&'static str, String> {
 }
 
 fn instance_default_user_data_dir(platform: &str) -> Result<PathBuf, String> {
-    match platform {
-        "antigravity" => cockpit_core::modules::instance::get_default_user_data_dir(),
-        "codex" => cockpit_core::modules::codex_instance::get_default_codex_home(),
-        "github_copilot" => {
-            cockpit_core::modules::github_copilot_instance::get_default_vscode_user_data_dir()
-        }
-        "windsurf" => {
-            cockpit_core::modules::windsurf_instance::get_default_windsurf_user_data_dir()
-        }
-        "kiro" => cockpit_core::modules::kiro_instance::get_default_kiro_user_data_dir(),
-        "cursor" => cockpit_core::modules::cursor_instance::get_default_cursor_user_data_dir(),
-        "gemini" => cockpit_core::modules::gemini_instance::get_default_gemini_cli_home_root(),
-        "codebuddy" => {
-            cockpit_core::modules::codebuddy_instance::get_default_codebuddy_user_data_dir()
-        }
-        "codebuddy_cn" => {
-            cockpit_core::modules::codebuddy_cn_instance::get_default_codebuddy_cn_user_data_dir()
-        }
-        "qoder" => cockpit_core::modules::qoder_instance::get_default_qoder_user_data_dir(),
-        "trae" => cockpit_core::modules::trae_instance::get_default_trae_user_data_dir(),
-        "workbuddy" => {
-            cockpit_core::modules::workbuddy_instance::get_default_workbuddy_user_data_dir()
-        }
-        other => Err(format!("unsupported instance platform: {other}")),
-    }
+    platform_dispatch::instance_default_user_data_dir(platform)
 }
 
 fn instance_defaults_value(platform: &str) -> Result<Value, String> {
-    match platform {
-        "antigravity" => to_value_result(cockpit_core::modules::instance::get_instance_defaults()),
-        "codex" => to_value_result(cockpit_core::modules::codex_instance::get_instance_defaults()),
-        "github_copilot" => {
-            to_value_result(cockpit_core::modules::github_copilot_instance::get_instance_defaults())
-        }
-        "windsurf" => {
-            to_value_result(cockpit_core::modules::windsurf_instance::get_instance_defaults())
-        }
-        "kiro" => to_value_result(cockpit_core::modules::kiro_instance::get_instance_defaults()),
-        "cursor" => {
-            to_value_result(cockpit_core::modules::cursor_instance::get_instance_defaults())
-        }
-        "gemini" => {
-            to_value_result(cockpit_core::modules::gemini_instance::get_instance_defaults())
-        }
-        "codebuddy" => {
-            to_value_result(cockpit_core::modules::codebuddy_instance::get_instance_defaults())
-        }
-        "codebuddy_cn" => {
-            to_value_result(cockpit_core::modules::codebuddy_cn_instance::get_instance_defaults())
-        }
-        "qoder" => to_value_result(cockpit_core::modules::qoder_instance::get_instance_defaults()),
-        "trae" => to_value_result(cockpit_core::modules::trae_instance::get_instance_defaults()),
-        "workbuddy" => {
-            to_value_result(cockpit_core::modules::workbuddy_instance::get_instance_defaults())
-        }
-        other => Err(format!("unsupported instance platform: {other}")),
-    }
+    platform_dispatch::instance_defaults_value(platform)
 }
 
 fn load_instance_store_for_platform(
     platform: &str,
 ) -> Result<cockpit_core::models::InstanceStore, String> {
-    match platform {
-        "antigravity" => cockpit_core::modules::instance::load_instance_store(),
-        "codex" => cockpit_core::modules::codex_instance::load_instance_store(),
-        "github_copilot" => cockpit_core::modules::github_copilot_instance::load_instance_store(),
-        "windsurf" => cockpit_core::modules::windsurf_instance::load_instance_store(),
-        "kiro" => cockpit_core::modules::kiro_instance::load_instance_store(),
-        "cursor" => cockpit_core::modules::cursor_instance::load_instance_store(),
-        "gemini" => cockpit_core::modules::gemini_instance::load_instance_store(),
-        "codebuddy" => cockpit_core::modules::codebuddy_instance::load_instance_store(),
-        "codebuddy_cn" => cockpit_core::modules::codebuddy_cn_instance::load_instance_store(),
-        "qoder" => cockpit_core::modules::qoder_instance::load_instance_store(),
-        "trae" => cockpit_core::modules::trae_instance::load_instance_store(),
-        "workbuddy" => cockpit_core::modules::workbuddy_instance::load_instance_store(),
-        other => Err(format!("unsupported instance platform: {other}")),
-    }
+    platform_dispatch::load_instance_store_for_platform(platform)
 }
 
 fn is_instance_profile_initialized(platform: &str, user_data_dir: &str) -> bool {
@@ -1959,25 +1827,7 @@ fn delete_instance_for_platform(platform: &str, params: &Value) -> Result<Value,
     if instance_id == DEFAULT_INSTANCE_ID {
         return Err("default instance cannot be deleted".to_string());
     }
-    match platform {
-        "antigravity" => cockpit_core::modules::instance::delete_instance(&instance_id),
-        "codex" => cockpit_core::modules::codex_instance::delete_instance(&instance_id),
-        "github_copilot" => {
-            cockpit_core::modules::github_copilot_instance::delete_instance(&instance_id)
-        }
-        "windsurf" => cockpit_core::modules::windsurf_instance::delete_instance(&instance_id),
-        "kiro" => cockpit_core::modules::kiro_instance::delete_instance(&instance_id),
-        "cursor" => cockpit_core::modules::cursor_instance::delete_instance(&instance_id),
-        "gemini" => cockpit_core::modules::gemini_instance::delete_instance(&instance_id),
-        "codebuddy" => cockpit_core::modules::codebuddy_instance::delete_instance(&instance_id),
-        "codebuddy_cn" => {
-            cockpit_core::modules::codebuddy_cn_instance::delete_instance(&instance_id)
-        }
-        "qoder" => cockpit_core::modules::qoder_instance::delete_instance(&instance_id),
-        "trae" => cockpit_core::modules::trae_instance::delete_instance(&instance_id),
-        "workbuddy" => cockpit_core::modules::workbuddy_instance::delete_instance(&instance_id),
-        other => return Err(format!("unsupported instance platform: {other}")),
-    }?;
+    (platform_def::find_platform(platform)?.delete_instance)(&instance_id)?;
     Ok(Value::Null)
 }
 
