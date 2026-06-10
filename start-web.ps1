@@ -1,9 +1,4 @@
 # Cockpit Tools Web Server - PowerShell Start Script
-param(
-    [int]$ServicePort = 19529,
-    [int]$WebPort = 18082
-)
-
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
@@ -33,52 +28,46 @@ if (-not (Test-Path "$WebRoot\index.html")) {
     exit 1
 }
 
-# Start service
-Write-Host "[1/2] Starting cockpit-service on 127.0.0.1:$ServicePort..." -ForegroundColor Yellow
-$serviceJob = Start-Job -ScriptBlock {
-    param($exe, $port)
-    & $exe "127.0.0.1:$port" 2>&1
-} -ArgumentList $ServiceExe, $ServicePort
+# Kill existing processes
+Write-Host "[0/2] Stopping any existing instances..." -ForegroundColor Yellow
+Get-Process -Name "cockpit-service","cockpit-web" -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 1
 
-Start-Sleep -Seconds 2
+# Start service
+Write-Host "[1/2] Starting cockpit-service on 127.0.0.1:19529..." -ForegroundColor Yellow
+$serviceJob = Start-Job -ScriptBlock {
+    param($exe)
+    & $exe 2>&1
+} -ArgumentList $ServiceExe
+
+Start-Sleep -Seconds 3
 
 # Start web gateway
-Write-Host "[2/2] Starting cockpit-web on 127.0.0.1:$WebPort..." -ForegroundColor Yellow
+Write-Host "[2/2] Starting cockpit-web on 127.0.0.1:18082..." -ForegroundColor Yellow
 $env:COCKPIT_TOOLS_WEB_ROOT = $WebRoot
 $webJob = Start-Job -ScriptBlock {
-    param($exe, $port, $root)
+    param($exe, $root)
     $env:COCKPIT_TOOLS_WEB_ROOT = $root
     & $exe 2>&1
-} -ArgumentList $WebExe, $WebPort, $WebRoot
+} -ArgumentList $WebExe, $WebRoot
 
 Start-Sleep -Seconds 2
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
 Write-Host "  Cockpit Tools is running!" -ForegroundColor Green
-Write-Host "  Open http://127.0.0.1:$WebPort in browser" -ForegroundColor Green
+Write-Host "  Open http://127.0.0.1:18082 in browser" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "Press Ctrl+C to stop all services." -ForegroundColor Yellow
+Write-Host "Press any key to stop all services..." -ForegroundColor Yellow
 Write-Host ""
 
-# Cleanup on exit
-try {
-    while ($true) {
-        Start-Sleep -Seconds 1
-        # Check if jobs are still running
-        if ($serviceJob.State -ne "Running") {
-            Write-Host "Service stopped unexpectedly." -ForegroundColor Red
-            break
-        }
-        if ($webJob.State -ne "Running") {
-            Write-Host "Web gateway stopped unexpectedly." -ForegroundColor Red
-            break
-        }
-    }
-} finally {
-    Write-Host "Stopping services..." -ForegroundColor Yellow
-    Stop-Job -Job $serviceJob, $webJob -ErrorAction SilentlyContinue
-    Remove-Job -Job $serviceJob, $webJob -Force -ErrorAction SilentlyContinue
-    Write-Host "Done." -ForegroundColor Green
-}
+# Wait for key press
+$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+
+# Cleanup
+Write-Host "Stopping services..." -ForegroundColor Yellow
+Stop-Job -Job $serviceJob, $webJob -ErrorAction SilentlyContinue
+Remove-Job -Job $serviceJob, $webJob -Force -ErrorAction SilentlyContinue
+Get-Process -Name "cockpit-service","cockpit-web" -ErrorAction SilentlyContinue | Stop-Process -Force
+Write-Host "Done." -ForegroundColor Green
