@@ -3340,12 +3340,12 @@ fn handle_provider_account_method(method: &str, params: &Value) -> Result<Option
                 &callback_url,
             ))
         }
-        "announcement/state/get" => to_value_result(block_on(
+        "announcement/state/get" => to_value_result(block_on_with_timeout(5000,
             cockpit_core::modules::announcement::get_announcement_state_for_version(
                 &application_version(),
             ),
         )),
-        "announcement/state/force-refresh" => to_value_result(block_on(
+        "announcement/state/force-refresh" => to_value_result(block_on_with_timeout(8000,
             cockpit_core::modules::announcement::force_refresh_announcements_for_version(
                 &application_version(),
             ),
@@ -3361,17 +3361,17 @@ fn handle_provider_account_method(method: &str, params: &Value) -> Result<Option
                 &application_version(),
             ),
         )),
-        "announcement/top-right-ad/get" => to_value_result(block_on(
+        "announcement/top-right-ad/get" => to_value_result(block_on_with_timeout(5000,
             cockpit_core::modules::announcement::get_top_right_ad_state_for_version(
                 &application_version(),
             ),
         )),
-        "announcement/sponsor-module/get" => to_value_result(block_on(
+        "announcement/sponsor-module/get" => to_value_result(block_on_with_timeout(5000,
             cockpit_core::modules::announcement::get_sponsor_module_state_for_version(
                 &application_version(),
             ),
         )),
-        "announcement/sponsor-module/force-refresh" => to_value_result(block_on(
+        "announcement/sponsor-module/force-refresh" => to_value_result(block_on_with_timeout(8000,
             cockpit_core::modules::announcement::force_refresh_sponsor_module_for_version(
                 &application_version(),
             ),

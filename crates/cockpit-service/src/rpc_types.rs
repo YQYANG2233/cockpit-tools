@@ -105,15 +105,22 @@ pub(crate) fn to_value_result<T: Serialize>(result: Result<T, String>) -> Result
     })
 }
 
+use std::sync::LazyLock;
+
+/// 共享 tokio runtime，避免每次 block_on 都创建新 runtime
+static SHARED_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .expect("create shared tokio runtime failed")
+});
+
 pub(crate) fn block_on<T, F>(future: F) -> Result<T, String>
 where
     F: Future<Output = Result<T, String>>,
 {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("create tokio runtime failed: {err}"))?;
-    rt.block_on(future)
+    SHARED_RUNTIME.block_on(future)
 }
 
 pub(crate) fn block_on_with_timeout<T, F>(
@@ -123,11 +130,7 @@ pub(crate) fn block_on_with_timeout<T, F>(
 where
     F: Future<Output = Result<T, String>>,
 {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("create tokio runtime failed: {err}"))?;
-    rt.block_on(async {
+    SHARED_RUNTIME.block_on(async {
         tokio::time::timeout(
             std::time::Duration::from_millis(timeout_ms),
             future,
@@ -141,9 +144,5 @@ pub(crate) fn block_on_value<T, F>(future: F) -> Result<T, String>
 where
     F: Future<Output = T>,
 {
-    Ok(tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("create async runtime failed: {err}"))?
-        .block_on(future))
+    Ok(SHARED_RUNTIME.block_on(future))
 }
