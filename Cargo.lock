@@ -848,6 +848,7 @@ dependencies = [
 name = "cockpit-service"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "chrono",
  "cockpit-core",
  "dirs 5.0.1",

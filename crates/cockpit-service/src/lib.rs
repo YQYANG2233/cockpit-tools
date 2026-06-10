@@ -5148,13 +5148,118 @@ pub fn start_server(addr: &str) -> Result<(), String> {
             ),
         );
     });
-    let server = Server::http(addr).map_err(|err| format!("bind service {addr} failed: {err}"))?;
+
+    let addr_parsed: std::net::SocketAddr = addr
+        .parse()
+        .map_err(|err| format!("invalid service addr {addr}: {err}"))?;
+
     println!("cockpit-service listening on {addr}");
-    for request in server.incoming_requests() {
-        let service_addr = addr.to_string();
-        thread::spawn(move || handle_http_request(request, &service_addr));
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .map_err(|err| format!("create tokio runtime failed: {err}"))?;
+
+    let service_addr = addr.to_string();
+    let service_addr_clone = service_addr.clone();
+
+    let app = axum::Router::new()
+        .route("/health", axum::routing::get(health_handler))
+        .route("/rpc", axum::routing::post(rpc_handler))
+        .route("/events", axum::routing::get(events_handler))
+        .route("/oauth-callback", axum::routing::get(oauth_callback_handler))
+        .with_state(service_addr_clone)
+        .layer(axum::middleware::from_fn(auth_middleware));
+
+    rt.block_on(async {
+        let listener = tokio::net::TcpListener::bind(addr_parsed)
+            .await
+            .map_err(|err| format!("bind service {addr} failed: {err}"))?;
+        axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>())
+            .await
+            .map_err(|err| format!("serve failed: {err}"))
+    })
+}
+
+async fn health_handler() -> axum::Json<serde_json::Value> {
+    axum::Json(json!({ "ok": true }))
+}
+
+async fn rpc_handler(
+    axum::extract::State(service_addr): axum::extract::State<String>,
+    body: String,
+) -> impl axum::response::IntoResponse {
+    match handle_json_rpc_body(&body, &service_addr) {
+        Ok(body) => (
+            axum::http::StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            body,
+        ),
+        Err(err) => (
+            axum::http::StatusCode::BAD_REQUEST,
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            json!({ "error": err }).to_string(),
+        ),
     }
-    Ok(())
+}
+
+async fn events_handler() -> impl axum::response::IntoResponse {
+    let response = events_response();
+    let status = response.status_code().0;
+    let mut headers = axum::http::HeaderMap::new();
+    for header in response.headers() {
+        if let (Ok(name), Ok(value)) = (
+            axum::http::header::HeaderName::from_bytes(header.field.as_str().as_str().as_bytes()),
+            axum::http::HeaderValue::from_str(header.value.as_str()),
+        ) {
+            headers.insert(name, value);
+        }
+    }
+    let mut body = Vec::new();
+    let mut reader = response.into_reader();
+    let _ = std::io::Read::read_to_end(&mut reader, &mut body);
+    (
+        axum::http::StatusCode::from_u16(status).unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR),
+        headers,
+        body,
+    )
+}
+
+async fn oauth_callback_handler(
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl axum::response::IntoResponse {
+    let url = format!("http://localhost/oauth-callback?{}",
+        params.iter().map(|(k,v)| format!("{k}={v}")).collect::<Vec<_>>().join("&"));
+    let response = antigravity_oauth_callback_response(&url);
+    let status = response.status_code().0;
+    (
+        axum::http::StatusCode::from_u16(status).unwrap_or(axum::http::StatusCode::FOUND),
+        "redirecting...",
+    )
+}
+
+async fn auth_middleware(
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> impl axum::response::IntoResponse {
+    let is_auth = is_loopback(Some(addr)) || request_token_matches_axum(req.headers());
+    if !is_auth {
+        return Err((
+            axum::http::StatusCode::UNAUTHORIZED,
+            json!({ "error": "rpc_token_required" }).to_string(),
+        ));
+    }
+    Ok(next.run(req).await)
+}
+
+fn request_token_matches_axum(headers: &axum::http::HeaderMap) -> bool {
+    let expected = rpc_auth_token();
+    headers.get(RPC_TOKEN_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v == expected)
+        .unwrap_or(false)
 }
 
 pub fn run_from_env() {
