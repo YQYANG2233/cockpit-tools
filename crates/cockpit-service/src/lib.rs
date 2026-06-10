@@ -5140,6 +5140,14 @@ fn handle_http_request(mut request: Request, service_addr: &str) {
 
 pub fn start_server(addr: &str) -> Result<(), String> {
     install_core_event_publishers();
+    // Pre-warm announcement cache in background to avoid blocking first request
+    thread::spawn(|| {
+        let _ = block_on_with_timeout(10000,
+            cockpit_core::modules::announcement::get_announcement_state_for_version(
+                &application_version(),
+            ),
+        );
+    });
     let server = Server::http(addr).map_err(|err| format!("bind service {addr} failed: {err}"))?;
     println!("cockpit-service listening on {addr}");
     for request in server.incoming_requests() {
