@@ -98,11 +98,13 @@ fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
 }
 
 fn request_authenticated(headers: &HeaderMap, remote_addr: SocketAddr, state: &WebState) -> bool {
-    if state.password.is_none() && is_loopback(remote_addr) {
+    // No password configured = no auth required
+    if state.password.is_none() {
         return true;
     }
+    // Password configured = check cookie
     let Some(password) = state.password.as_ref() else {
-        return false;
+        return true;
     };
     let expected = session_cookie_value(password);
     cookie_value(headers, SESSION_COOKIE).as_deref() == Some(expected.as_str())
