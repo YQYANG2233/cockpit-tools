@@ -17,6 +17,8 @@ mod desktop_shell;
 mod external_import;
 mod logs;
 mod params;
+mod platform_def;
+mod platform_dispatch;
 mod rpc_catalog;
 mod rpc_types;
 mod settings;
@@ -26,6 +28,7 @@ mod webdav;
 
 pub use rpc_types::*;
 use params::*;
+use platform_def::*;
 use settings::*;
 use logs::*;
 use backup::*;
