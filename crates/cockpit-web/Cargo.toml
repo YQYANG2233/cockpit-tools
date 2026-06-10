@@ -9,7 +9,7 @@ license = "CC-BY-NC-SA-4.0"
 cockpit-service = { path = "../cockpit-service" }
 serde.workspace = true
 serde_json.workspace = true
-tiny_http.workspace = true
-reqwest = { workspace = true, features = ["blocking"] }
-serde_urlencoded.workspace = true
+axum.workspace = true
+tokio.workspace = true
+reqwest = { workspace = true }
 sha2.workspace = true

@@ -1,14 +1,17 @@
-use reqwest::blocking::Client;
+use axum::body::Body;
+use axum::extract::{Request as AxumRequest, State as AxumState};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::response::{Html, IntoResponse, Json, Redirect, Response};
+use axum::routing::{get, post};
+use axum::Router;
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::{Cursor, Read};
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
-use tiny_http::{Header, Method, Request, Response, ResponseBox, Server, StatusCode};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const WEB_ADDR_ENV: &str = "COCKPIT_TOOLS_WEB_ADDR";
 const WEB_ROOT_ENV: &str = "COCKPIT_TOOLS_WEB_ROOT";
@@ -21,36 +24,13 @@ const SSE_FLUSH_PADDING_BYTES: usize = 8193;
 struct WebState {
     service_addr: String,
     web_root: PathBuf,
-    client: Client,
+    client: reqwest::Client,
     password: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct LoginForm {
     password: String,
-}
-
-struct PrefixThenRead<R> {
-    prefix: Cursor<Vec<u8>>,
-    inner: R,
-}
-
-impl<R: Read> PrefixThenRead<R> {
-    fn new(prefix: Vec<u8>, inner: R) -> Self {
-        Self {
-            prefix: Cursor::new(prefix),
-            inner,
-        }
-    }
-}
-
-impl<R: Read> Read for PrefixThenRead<R> {
-    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
-        if (self.prefix.position() as usize) < self.prefix.get_ref().len() {
-            return self.prefix.read(out);
-        }
-        self.inner.read(out)
-    }
 }
 
 fn read_env_trim(key: &str) -> Option<String> {
@@ -68,30 +48,6 @@ pub fn resolve_web_root() -> PathBuf {
     read_env_trim(WEB_ROOT_ENV)
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("dist"))
-}
-
-fn response_with_content_type(status: u16, body: Vec<u8>, content_type: &str) -> ResponseBox {
-    let mut response = Response::from_data(body).with_status_code(StatusCode(status));
-    if let Ok(header) = Header::from_bytes("content-type", content_type) {
-        response.add_header(header);
-    }
-    response.boxed()
-}
-
-fn json_response(status: u16, value: serde_json::Value) -> ResponseBox {
-    response_with_content_type(status, value.to_string().into_bytes(), "application/json")
-}
-
-fn html_response(status: u16, body: impl Into<String>) -> ResponseBox {
-    response_with_content_type(status, body.into().into_bytes(), "text/html; charset=utf-8")
-}
-
-fn text_response(status: u16, body: impl Into<String>) -> ResponseBox {
-    response_with_content_type(
-        status,
-        body.into().into_bytes(),
-        "text/plain; charset=utf-8",
-    )
 }
 
 fn unix_timestamp_millis() -> u128 {
@@ -112,33 +68,6 @@ fn sse_frame(event: &str, data: serde_json::Value) -> Vec<u8> {
     frame
 }
 
-fn is_loopback(addr: Option<SocketAddr>) -> bool {
-    matches!(
-        addr.map(|addr| addr.ip()),
-        Some(IpAddr::V4(ip)) if ip.is_loopback()
-    ) || matches!(
-        addr.map(|addr| addr.ip()),
-        Some(IpAddr::V6(ip)) if ip.is_loopback()
-    )
-}
-
-fn cookie_value(request: &Request, name: &str) -> Option<String> {
-    request.headers().iter().find_map(|header| {
-        if !header
-            .field
-            .as_str()
-            .as_str()
-            .eq_ignore_ascii_case("cookie")
-        {
-            return None;
-        }
-        header.value.as_str().split(';').find_map(|part| {
-            let (key, value) = part.trim().split_once('=')?;
-            (key == name).then(|| value.to_string())
-        })
-    })
-}
-
 fn hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
@@ -157,226 +86,26 @@ fn session_cookie_value(password: &str) -> String {
     hex(&hasher.finalize())
 }
 
-fn request_authenticated(request: &Request, state: &WebState) -> bool {
-    if state.password.is_none() && is_loopback(request.remote_addr().copied()) {
+fn is_loopback(addr: SocketAddr) -> bool {
+    addr.ip().is_loopback()
+}
+
+fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers.get("cookie")?.to_str().ok()?.split(';').find_map(|part| {
+        let (key, value) = part.trim().split_once('=')?;
+        (key == name).then(|| value.to_string())
+    })
+}
+
+fn request_authenticated(headers: &HeaderMap, remote_addr: SocketAddr, state: &WebState) -> bool {
+    if state.password.is_none() && is_loopback(remote_addr) {
         return true;
     }
     let Some(password) = state.password.as_ref() else {
         return false;
     };
     let expected = session_cookie_value(password);
-    cookie_value(request, SESSION_COOKIE).as_deref() == Some(expected.as_str())
-}
-
-fn login_page() -> ResponseBox {
-    html_response(
-        200,
-        r#"<!doctype html><html><head><meta charset="utf-8"><title>Cockpit Tools Login</title></head><body><form method="post" action="/__login"><input type="password" name="password" autofocus><button type="submit">Login</button></form></body></html>"#,
-    )
-}
-
-fn read_body(request: &mut Request) -> Result<String, String> {
-    let mut body = String::new();
-    request
-        .as_reader()
-        .take(2 * 1024 * 1024)
-        .read_to_string(&mut body)
-        .map_err(|err| format!("read request body failed: {err}"))?;
-    Ok(body)
-}
-
-fn login_submit(request: &mut Request, state: &WebState) -> ResponseBox {
-    let body = read_body(request).unwrap_or_default();
-    let password = serde_urlencoded::from_str::<LoginForm>(&body)
-        .map(|form| form.password)
-        .unwrap_or_default();
-    if state.password.as_deref() != Some(password.as_str()) {
-        return html_response(403, "Forbidden");
-    }
-    let mut response = html_response(302, "");
-    let cookie_value = session_cookie_value(&password);
-    if let Ok(header) = Header::from_bytes(
-        "set-cookie",
-        format!("{SESSION_COOKIE}={cookie_value}; Path=/; HttpOnly; SameSite=Lax"),
-    ) {
-        response.add_header(header);
-    }
-    if let Ok(header) = Header::from_bytes("location", "/") {
-        response.add_header(header);
-    }
-    response
-}
-
-fn redirect_response(location: &str) -> ResponseBox {
-    let mut response = html_response(302, "");
-    if let Ok(header) = Header::from_bytes("location", location) {
-        response.add_header(header);
-    }
-    response
-}
-
-fn runtime_response(state: &WebState) -> ResponseBox {
-    json_response(
-        200,
-        json!({
-            "mode": "web-gateway",
-            "rpcBaseUrl": "/api/rpc",
-            "eventBaseUrl": "/api/events",
-            "serviceHost": state.service_addr,
-            "features": {
-                "jsonRpc": true,
-                "events": true,
-                "serviceHostExecution": true,
-                "appVersion": cockpit_service::application_version()
-            }
-        }),
-    )
-}
-
-fn post_service_rpc(state: &WebState, body: String) -> Result<(u16, String), String> {
-    let target = format!("http://{}/rpc", state.service_addr);
-    state
-        .client
-        .post(target)
-        .header(
-            cockpit_service::RPC_TOKEN_HEADER,
-            cockpit_service::rpc_auth_token(),
-        )
-        .header("content-type", "application/json")
-        .body(body)
-        .send()
-        .map_err(|err| err.to_string())
-        .map(|response| {
-            let status = response.status().as_u16();
-            let text = response.text().unwrap_or_else(|err| {
-                json!({ "error": format!("read service response failed: {err}") }).to_string()
-            });
-            (status, text)
-        })
-}
-
-fn proxy_rpc(request: &mut Request, state: &WebState) -> ResponseBox {
-    let body = match read_body(request) {
-        Ok(body) => body,
-        Err(err) => return json_response(400, json!({ "error": err })),
-    };
-    match post_service_rpc(state, body) {
-        Ok((status, text)) => {
-            response_with_content_type(status, text.into_bytes(), "application/json")
-        }
-        Err(err) => json_response(
-            502,
-            json!({
-                "error": "service_unreachable",
-                "message": err.to_string(),
-                "serviceHost": state.service_addr
-            }),
-        ),
-    }
-}
-
-fn external_import_response(url: &str, state: &WebState) -> ResponseBox {
-    let query = url
-        .split_once('?')
-        .map(|(_, query)| query)
-        .filter(|query| !query.trim().is_empty());
-    let Some(query) = query else {
-        return json_response(
-            400,
-            json!({ "error": "missing_query", "message": "External import requires query parameters" }),
-        );
-    };
-    let raw_url = format!("cockpit-tools://import?{query}");
-    let body = json!({
-        "jsonrpc": "2.0",
-        "id": "external-import",
-        "method": "external-import/pending/submit-url",
-        "params": {
-            "rawUrl": raw_url,
-            "source": "web-gateway"
-        }
-    })
-    .to_string();
-    match post_service_rpc(state, body) {
-        Ok((status, text)) if status == 200 => {
-            let parsed = serde_json::from_str::<serde_json::Value>(&text).unwrap_or_default();
-            if parsed.get("error").is_some() {
-                return response_with_content_type(400, text.into_bytes(), "application/json");
-            }
-            redirect_response("/?externalImport=1")
-        }
-        Ok((status, text)) => {
-            response_with_content_type(status, text.into_bytes(), "application/json")
-        }
-        Err(err) => json_response(
-            502,
-            json!({
-                "error": "service_unreachable",
-                "message": err,
-                "serviceHost": state.service_addr
-            }),
-        ),
-    }
-}
-
-fn make_header(name: &str, value: &str) -> Option<Header> {
-    Header::from_bytes(name.as_bytes(), value.as_bytes()).ok()
-}
-
-fn proxy_events(state: &WebState) -> ResponseBox {
-    let target = format!("http://{}/events", state.service_addr);
-    match state
-        .client
-        .get(target)
-        .header(
-            cockpit_service::RPC_TOKEN_HEADER,
-            cockpit_service::rpc_auth_token(),
-        )
-        .send()
-    {
-        Ok(response) => {
-            let status = response.status().as_u16();
-            if !response.status().is_success() {
-                let text = response.text().unwrap_or_else(|err| {
-                    json!({ "error": format!("read service response failed: {err}") }).to_string()
-                });
-                return response_with_content_type(status, text.into_bytes(), "application/json");
-            }
-            let mut headers = Vec::new();
-            for (name, value) in [
-                ("content-type", "text/event-stream; charset=utf-8"),
-                ("cache-control", "no-cache"),
-                ("x-accel-buffering", "no"),
-            ] {
-                if let Some(header) = make_header(name, value) {
-                    headers.push(header);
-                }
-            }
-            Response::new(
-                StatusCode(status),
-                headers,
-                Box::new(PrefixThenRead::new(
-                    sse_frame(
-                        "gateway.ready",
-                        json!({ "emittedAt": unix_timestamp_millis(), "serviceHost": state.service_addr }),
-                    ),
-                    response,
-                )) as Box<dyn Read + Send>,
-                None,
-                None,
-            )
-            .with_chunked_threshold(0)
-            .boxed()
-        }
-        Err(err) => json_response(
-            502,
-            json!({
-                "error": "service_unreachable",
-                "message": err.to_string(),
-                "serviceHost": state.service_addr
-            }),
-        ),
-    }
+    cookie_value(headers, SESSION_COOKIE).as_deref() == Some(expected.as_str())
 }
 
 fn content_type(path: &Path) -> &'static str {
@@ -406,9 +135,206 @@ fn sanitize_path(url: &str) -> Option<PathBuf> {
     Some(PathBuf::from(path))
 }
 
-fn static_response(url: &str, state: &WebState) -> ResponseBox {
-    let Some(relative) = sanitize_path(url) else {
-        return text_response(400, "Bad request");
+// --- Route handlers ---
+
+async fn login_page() -> Html<&'static str> {
+    Html(r#"<!doctype html><html><head><meta charset="utf-8"><title>Cockpit Tools Login</title></head><body><form method="post" action="/__login"><input type="password" name="password" autofocus><button type="submit">Login</button></form></body></html>"#)
+}
+
+async fn login_submit(
+    AxumState(state): AxumState<Arc<WebState>>,
+    axum::Form(form): axum::Form<LoginForm>,
+) -> impl IntoResponse {
+    if state.password.as_deref() != Some(form.password.as_str()) {
+        return (StatusCode::FORBIDDEN, Html("Forbidden")).into_response();
+    }
+    let cookie_val = session_cookie_value(&form.password);
+    let cookie = format!("{SESSION_COOKIE}={cookie_val}; Path=/; HttpOnly; SameSite=Lax");
+    let mut response = Redirect::temporary("/").into_response();
+    response.headers_mut().insert(
+        "set-cookie",
+        HeaderValue::from_str(&cookie).unwrap(),
+    );
+    response
+}
+
+async fn runtime_endpoint(AxumState(state): AxumState<Arc<WebState>>) -> Json<serde_json::Value> {
+    Json(json!({
+        "mode": "web-gateway",
+        "rpcBaseUrl": "/api/rpc",
+        "eventBaseUrl": "/api/events",
+        "serviceHost": state.service_addr,
+        "features": {
+            "jsonRpc": true,
+            "events": true,
+            "serviceHostExecution": true,
+            "appVersion": cockpit_service::application_version()
+        }
+    }))
+}
+
+async fn proxy_rpc(
+    AxumState(state): AxumState<Arc<WebState>>,
+    body: String,
+) -> Response {
+    let target = format!("http://{}/rpc", state.service_addr);
+    match state
+        .client
+        .post(target)
+        .header(
+            cockpit_service::RPC_TOKEN_HEADER,
+            cockpit_service::rpc_auth_token(),
+        )
+        .header("content-type", "application/json")
+        .body(body)
+        .send()
+        .await
+    {
+        Ok(response) => {
+            let status = StatusCode::from_u16(response.status().as_u16())
+                .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+            match response.text().await {
+                Ok(text) => (
+                    status,
+                    [("content-type", "application/json")],
+                    text,
+                )
+                    .into_response(),
+                Err(err) => (
+                    StatusCode::BAD_GATEWAY,
+                    Json(json!({ "error": format!("read service response failed: {err}") })),
+                )
+                    .into_response(),
+            }
+        }
+        Err(err) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({
+                "error": "service_unreachable",
+                "message": err.to_string(),
+                "serviceHost": state.service_addr
+            })),
+        )
+            .into_response(),
+    }
+}
+
+async fn proxy_events(AxumState(state): AxumState<Arc<WebState>>) -> Response {
+    let target = format!("http://{}/events", state.service_addr);
+    match state
+        .client
+        .get(target)
+        .header(
+            cockpit_service::RPC_TOKEN_HEADER,
+            cockpit_service::rpc_auth_token(),
+        )
+        .send()
+        .await
+    {
+        Ok(response) => {
+            if !response.status().is_success() {
+                let status = StatusCode::from_u16(response.status().as_u16())
+                    .unwrap_or(StatusCode::BAD_GATEWAY);
+                let text = response.text().await.unwrap_or_default();
+                return (status, [("content-type", "application/json")], text).into_response();
+            }
+            let ready_frame = sse_frame(
+                "gateway.ready",
+                json!({ "emittedAt": unix_timestamp_millis(), "serviceHost": state.service_addr }),
+            );
+            match response.bytes().await {
+                Ok(body) => {
+                    let mut full = ready_frame;
+                    full.extend_from_slice(&body);
+                    (
+                        StatusCode::OK,
+                        [
+                            ("content-type", "text/event-stream; charset=utf-8"),
+                            ("cache-control", "no-cache"),
+                            ("x-accel-buffering", "no"),
+                        ],
+                        full,
+                    )
+                        .into_response()
+                }
+                Err(err) => (
+                    StatusCode::BAD_GATEWAY,
+                    Json(json!({ "error": format!("read events failed: {err}") })),
+                )
+                    .into_response(),
+            }
+        }
+        Err(err) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({
+                "error": "service_unreachable",
+                "message": err.to_string(),
+                "serviceHost": state.service_addr
+            })),
+        )
+            .into_response(),
+    }
+}
+
+async fn external_import(
+    AxumState(state): AxumState<Arc<WebState>>,
+    axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
+) -> impl IntoResponse {
+    let url = uri.to_string();
+    let query = url
+        .split_once('?')
+        .map(|(_, query)| query)
+        .filter(|query| !query.trim().is_empty());
+    let Some(query) = query else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "missing_query", "message": "External import requires query parameters" })),
+        ).into_response();
+    };
+    let raw_url = format!("cockpit-tools://import?{query}");
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": "external-import",
+        "method": "external-import/pending/submit-url",
+        "params": {
+            "rawUrl": raw_url,
+            "source": "web-gateway"
+        }
+    })
+    .to_string();
+    let target = format!("http://{}/rpc", state.service_addr);
+    match state
+        .client
+        .post(target)
+        .header(
+            cockpit_service::RPC_TOKEN_HEADER,
+            cockpit_service::rpc_auth_token(),
+        )
+        .header("content-type", "application/json")
+        .body(body)
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => Redirect::temporary("/?externalImport=1").into_response(),
+        Ok(resp) => {
+            let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+            let text = resp.text().await.unwrap_or_default();
+            (status, [("content-type", "application/json")], text).into_response()
+        }
+        Err(err) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": "service_unreachable", "message": err.to_string(), "serviceHost": state.service_addr })),
+        ).into_response(),
+    }
+}
+
+async fn static_files(
+    AxumState(state): AxumState<Arc<WebState>>,
+    axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
+) -> impl IntoResponse {
+    let url = uri.to_string();
+    let Some(relative) = sanitize_path(&url) else {
+        return (StatusCode::BAD_REQUEST, "Bad request").into_response();
     };
     let mut path = state.web_root.join(relative);
     if path.is_dir() {
@@ -418,58 +344,89 @@ fn static_response(url: &str, state: &WebState) -> ResponseBox {
         path = state.web_root.join("index.html");
     }
     match fs::read(&path) {
-        Ok(bytes) => response_with_content_type(200, bytes, content_type(&path)),
-        Err(_) => html_response(
-            404,
-            format!(
+        Ok(bytes) => (
+            StatusCode::OK,
+            [("content-type", content_type(&path))],
+            bytes,
+        )
+            .into_response(),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            Html(format!(
                 "Cockpit Tools web UI not found. Build the frontend or set {WEB_ROOT_ENV}. root={}",
                 state.web_root.display()
-            ),
-        ),
+            )),
+        )
+            .into_response(),
     }
 }
 
-fn handle_request(mut request: Request, state: &WebState) {
-    let method = request.method().clone();
-    let url = request.url().to_string();
-    let path = url.split('?').next().unwrap_or(url.as_str()).to_string();
-    let public = matches!(
-        (method.clone(), path.as_str()),
-        (Method::Get, "/__login") | (Method::Post, "/__login")
-    );
-    let response = if !public && !request_authenticated(&request, state) {
-        html_response(401, r#"<a href="/__login">Login required</a>"#)
-    } else {
-        match (method, path.as_str()) {
-            (Method::Get, "/__login") => login_page(),
-            (Method::Post, "/__login") => login_submit(&mut request, state),
-            (Method::Get, "/api/runtime") => runtime_response(state),
-            (Method::Post, "/api/rpc") => proxy_rpc(&mut request, state),
-            (Method::Get, "/api/events") => proxy_events(state),
-            (Method::Get, "/external-import")
-            | (Method::Get, "/provider-import")
-            | (Method::Get, "/account-import") => external_import_response(&url, state),
-            _ => static_response(&url, state),
-        }
-    };
-    let _ = request.respond(response);
+// --- Auth middleware ---
+
+async fn auth_middleware(
+    AxumState(state): AxumState<Arc<WebState>>,
+    headers: HeaderMap,
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<SocketAddr>,
+    req: AxumRequest,
+    next: axum::middleware::Next,
+) -> Response {
+    let path = req.uri().path();
+    let public = path == "/__login";
+    if !public && !request_authenticated(&headers, addr, &state) {
+        return Html(r#"<a href="/__login">Login required</a>"#).into_response();
+    }
+    next.run(req).await
+}
+
+// --- Server ---
+
+pub async fn start_server_async(
+    web_addr: &str,
+    service_addr: &str,
+    web_root: PathBuf,
+) -> Result<(), String> {
+    let state = Arc::new(WebState {
+        service_addr: service_addr.to_string(),
+        web_root,
+        client: reqwest::Client::builder()
+            .pool_max_idle_per_host(20)
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|err| format!("create http client failed: {err}"))?,
+        password: read_env_trim(WEB_PASSWORD_ENV),
+    });
+
+    let app = Router::new()
+        .route("/__login", get(login_page).post(login_submit))
+        .route("/api/runtime", get(runtime_endpoint))
+        .route("/api/rpc", post(proxy_rpc))
+        .route("/api/events", get(proxy_events))
+        .route("/external-import", get(external_import))
+        .route("/provider-import", get(external_import))
+        .route("/account-import", get(external_import))
+        .fallback(static_files)
+        .layer(axum::middleware::from_fn_with_state(state.clone(), auth_middleware))
+        .with_state(state);
+
+    let addr: SocketAddr = web_addr
+        .parse()
+        .map_err(|err| format!("invalid web addr {web_addr}: {err}"))?;
+    println!("cockpit-web listening on {web_addr} (service={service_addr})");
+
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|err| format!("bind web {web_addr} failed: {err}"))?;
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
+        .await
+        .map_err(|err| format!("serve failed: {err}"))
 }
 
 pub fn start_server(web_addr: &str, service_addr: &str, web_root: PathBuf) -> Result<(), String> {
-    let server =
-        Server::http(web_addr).map_err(|err| format!("bind web {web_addr} failed: {err}"))?;
-    let state = WebState {
-        service_addr: service_addr.to_string(),
-        web_root,
-        client: Client::new(),
-        password: read_env_trim(WEB_PASSWORD_ENV),
-    };
-    println!("cockpit-web listening on {web_addr} (service={service_addr})");
-    for request in server.incoming_requests() {
-        let state = state.clone();
-        thread::spawn(move || handle_request(request, &state));
-    }
-    Ok(())
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("create tokio runtime failed: {err}"))?;
+    rt.block_on(start_server_async(web_addr, service_addr, web_root))
 }
 
 pub fn run_from_env() -> Result<(), String> {
