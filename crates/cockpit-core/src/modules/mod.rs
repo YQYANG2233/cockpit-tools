@@ -65,6 +65,7 @@ pub mod qoder_instance;
 pub mod qoder_oauth;
 pub mod quota;
 pub mod quota_cache;
+pub mod sync_runtime;
 pub mod system_host;
 // pub mod sync_settings;
 pub mod trae_account;

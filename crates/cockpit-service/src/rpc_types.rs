@@ -105,40 +105,13 @@ pub(crate) fn to_value_result<T: Serialize>(result: Result<T, String>) -> Result
     })
 }
 
-use std::sync::LazyLock;
-
-/// 全局 runtime handle，由 start_server 初始化
-/// block_in_place + Handle::block_on 是安全的：
-/// block_in_place 会先创建替代 worker，再阻塞当前线程，不会导致死锁
-static RUNTIME_HANDLE: OnceLock<tokio::runtime::Handle> = OnceLock::new();
-
-use std::sync::OnceLock;
-
-pub(crate) fn set_runtime_handle(handle: tokio::runtime::Handle) {
-    let _ = RUNTIME_HANDLE.set(handle);
-}
-
-fn get_handle() -> tokio::runtime::Handle {
-    RUNTIME_HANDLE
-        .get()
-        .cloned()
-        .unwrap_or_else(|| {
-            // Fallback: 创建一个临时 runtime（仅测试环境使用）
-            static FALLBACK: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("create fallback runtime failed")
-            });
-            FALLBACK.handle().clone()
-        })
-}
-
+/// block_on 使用 cockpit_core 的共享多线程 runtime（4 workers）
+/// 避免 Handle::block_on 从 tiny_http worker 线程调用时的死锁问题
 pub(crate) fn block_on<T, F>(future: F) -> Result<T, String>
 where
     F: Future<Output = Result<T, String>>,
 {
-    get_handle().block_on(future)
+    cockpit_core::modules::sync_runtime::block_on(future)
 }
 
 pub(crate) fn block_on_with_timeout<T, F>(
@@ -148,7 +121,7 @@ pub(crate) fn block_on_with_timeout<T, F>(
 where
     F: Future<Output = Result<T, String>>,
 {
-    get_handle().block_on(async {
+    cockpit_core::modules::sync_runtime::block_on(async {
         tokio::time::timeout(
             std::time::Duration::from_millis(timeout_ms),
             future,
@@ -162,5 +135,8 @@ pub(crate) fn block_on_value<T, F>(future: F) -> Result<T, String>
 where
     F: Future<Output = T>,
 {
-    Ok(get_handle().block_on(future))
+    Ok(cockpit_core::modules::sync_runtime::block_on(future))
 }
+
+/// 保留兼容性（不再使用）
+pub(crate) fn set_runtime_handle(_handle: tokio::runtime::Handle) {}
