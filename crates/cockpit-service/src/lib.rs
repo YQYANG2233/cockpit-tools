@@ -5140,7 +5140,7 @@ fn handle_http_request(mut request: Request, service_addr: &str) {
 
 pub fn start_server(addr: &str) -> Result<(), String> {
     install_core_event_publishers();
-    // Pre-warm announcement cache in background to avoid blocking first request
+    // Pre-warm announcement cache in background
     thread::spawn(|| {
         let _ = block_on_with_timeout(10000,
             cockpit_core::modules::announcement::get_announcement_state_for_version(
@@ -5149,37 +5149,22 @@ pub fn start_server(addr: &str) -> Result<(), String> {
         );
     });
 
-    let addr_parsed: std::net::SocketAddr = addr
-        .parse()
-        .map_err(|err| format!("invalid service addr {addr}: {err}"))?;
-
+    let server = Server::http(addr)
+        .map_err(|err| format!("bind service {addr} failed: {err}"))?;
     println!("cockpit-service listening on {addr}");
 
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(4)
-        .enable_all()
-        .build()
-        .map_err(|err| format!("create tokio runtime failed: {err}"))?;
-
     let service_addr = addr.to_string();
-    let service_addr_clone = service_addr.clone();
 
-    let app = axum::Router::new()
-        .route("/health", axum::routing::get(health_handler))
-        .route("/rpc", axum::routing::post(rpc_handler))
-        .route("/events", axum::routing::get(events_handler))
-        .route("/oauth-callback", axum::routing::get(oauth_callback_handler))
-        .with_state(service_addr_clone)
-        .layer(axum::middleware::from_fn(auth_middleware));
-
-    rt.block_on(async {
-        let listener = tokio::net::TcpListener::bind(addr_parsed)
-            .await
-            .map_err(|err| format!("bind service {addr} failed: {err}"))?;
-        axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>())
-            .await
-            .map_err(|err| format!("serve failed: {err}"))
-    })
+    // tiny_http 顺序处理请求，每个请求在独立线程中处理
+    // 避免 async runtime 的并发阻塞问题
+    for request in server.incoming_requests() {
+        let addr = service_addr.clone();
+        // 使用独立 OS 线程处理每个请求，避免阻塞 tiny_http 接受循环
+        thread::spawn(move || {
+            handle_http_request(request, &addr);
+        });
+    }
+    Ok(())
 }
 
 async fn health_handler() -> axum::Json<serde_json::Value> {
@@ -5190,24 +5175,23 @@ async fn rpc_handler(
     axum::extract::State(service_addr): axum::extract::State<String>,
     body: String,
 ) -> impl axum::response::IntoResponse {
-    // Run RPC handler in blocking thread pool (like Codex-Manager)
-    // This prevents blocking operations (network I/O) from blocking the async runtime
-    match tokio::task::spawn_blocking(move || handle_json_rpc_body(&body, &service_addr)).await {
-        Ok(Ok(body)) => (
+    use axum::response::IntoResponse;
+    // block_in_place 将当前 worker 标记为阻塞，tokio 自动创建替代 worker
+    // 这样 Handle::block_on 不会阻塞 async 运行时
+    let result = tokio::task::block_in_place(move || handle_json_rpc_body(&body, &service_addr));
+    match result {
+        Ok(body) => (
             axum::http::StatusCode::OK,
             [(axum::http::header::CONTENT_TYPE, "application/json")],
             body,
-        ),
-        Ok(Err(err)) => (
+        )
+            .into_response(),
+        Err(err) => (
             axum::http::StatusCode::BAD_REQUEST,
             [(axum::http::header::CONTENT_TYPE, "application/json")],
             json!({ "error": err }).to_string(),
-        ),
-        Err(err) => (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            [(axum::http::header::CONTENT_TYPE, "application/json")],
-            json!({ "error": format!("task join error: {err}") }).to_string(),
-        ),
+        )
+            .into_response(),
     }
 }
 

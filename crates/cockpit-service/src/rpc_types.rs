@@ -107,20 +107,38 @@ pub(crate) fn to_value_result<T: Serialize>(result: Result<T, String>) -> Result
 
 use std::sync::LazyLock;
 
-/// 共享 tokio runtime，避免每次 block_on 都创建新 runtime
-static SHARED_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(4)
-        .enable_all()
-        .build()
-        .expect("create shared tokio runtime failed")
-});
+/// 全局 runtime handle，由 start_server 初始化
+/// block_in_place + Handle::block_on 是安全的：
+/// block_in_place 会先创建替代 worker，再阻塞当前线程，不会导致死锁
+static RUNTIME_HANDLE: OnceLock<tokio::runtime::Handle> = OnceLock::new();
+
+use std::sync::OnceLock;
+
+pub(crate) fn set_runtime_handle(handle: tokio::runtime::Handle) {
+    let _ = RUNTIME_HANDLE.set(handle);
+}
+
+fn get_handle() -> tokio::runtime::Handle {
+    RUNTIME_HANDLE
+        .get()
+        .cloned()
+        .unwrap_or_else(|| {
+            // Fallback: 创建一个临时 runtime（仅测试环境使用）
+            static FALLBACK: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("create fallback runtime failed")
+            });
+            FALLBACK.handle().clone()
+        })
+}
 
 pub(crate) fn block_on<T, F>(future: F) -> Result<T, String>
 where
     F: Future<Output = Result<T, String>>,
 {
-    SHARED_RUNTIME.block_on(future)
+    get_handle().block_on(future)
 }
 
 pub(crate) fn block_on_with_timeout<T, F>(
@@ -130,7 +148,7 @@ pub(crate) fn block_on_with_timeout<T, F>(
 where
     F: Future<Output = Result<T, String>>,
 {
-    SHARED_RUNTIME.block_on(async {
+    get_handle().block_on(async {
         tokio::time::timeout(
             std::time::Duration::from_millis(timeout_ms),
             future,
@@ -144,5 +162,5 @@ pub(crate) fn block_on_value<T, F>(future: F) -> Result<T, String>
 where
     F: Future<Output = T>,
 {
-    Ok(SHARED_RUNTIME.block_on(future))
+    Ok(get_handle().block_on(future))
 }

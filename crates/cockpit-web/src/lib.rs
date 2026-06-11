@@ -391,7 +391,7 @@ pub async fn start_server_async(
         service_addr: service_addr.to_string(),
         web_root,
         client: reqwest::Client::builder()
-            .pool_max_idle_per_host(0)
+            .pool_max_idle_per_host(16)
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(|err| format!("create http client failed: {err}"))?,
