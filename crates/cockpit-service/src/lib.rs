@@ -5102,40 +5102,56 @@ fn antigravity_oauth_callback_response(url: &str) -> ResponseBox {
     }
 }
 
-fn handle_http_request(mut request: Request, service_addr: &str) {
-    let method = request.method().clone();
-    let url = request.url().to_string();
-    let response = if method == Method::Get && url.starts_with("/oauth-callback") {
-        antigravity_oauth_callback_response(&url)
-    } else {
-        match (method, url.as_str()) {
-            (Method::Get, "/health") => response_json(200, json!({ "ok": true }).to_string()),
-            (Method::Get, "/events") => {
-                if !request_token_matches(&request) {
-                    response_json(401, json!({ "error": "rpc_token_required" }).to_string())
-                } else {
-                    events_response()
-                }
-            }
-            (Method::Post, "/rpc") => {
-                if !is_loopback(request.remote_addr().copied()) && !request_token_matches(&request)
-                {
-                    response_json(401, json!({ "error": "rpc_token_required" }).to_string())
-                } else if !request_token_matches(&request) {
-                    response_json(401, json!({ "error": "rpc_token_required" }).to_string())
-                } else {
-                    match read_body(&mut request)
-                        .and_then(|body| handle_json_rpc_body(&body, service_addr))
-                    {
-                        Ok(body) => response_json(200, body),
-                        Err(err) => response_json(400, json!({ "error": err }).to_string()),
-                    }
-                }
-            }
-            _ => response_json(404, json!({ "error": "not_found" }).to_string()),
+fn handle_http_request_safe(request: Request, service_addr: &str) {
+    // 使用 catch_unwind 隔离 panic（参考 Codex-Manager）
+    // 所有逻辑（包括 respond）都在闭包内，避免 move 问题
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut request = request;
+        let method = request.method().clone();
+        let url = request.url().to_string();
+
+        // /health 绕过队列直接响应
+        if method == Method::Get && url == "/health" {
+            let _ = request.respond(response_json(200, json!({ "ok": true }).to_string()));
+            return;
         }
-    };
-    let _ = request.respond(response);
+        // /oauth-callback 绕过队列
+        if method == Method::Get && url.starts_with("/oauth-callback") {
+            let _ = request.respond(antigravity_oauth_callback_response(&url));
+            return;
+        }
+
+        let response = handle_http_request_inner(method, &url, &mut request, service_addr);
+        let _ = request.respond(response);
+    }));
+}
+
+fn handle_http_request_inner(method: Method, url: &str, request: &mut Request, service_addr: &str) -> ResponseBox {
+    match (method, url) {
+        (Method::Get, "/events") => {
+            if !request_token_matches(request) {
+                response_json(401, json!({ "error": "rpc_token_required" }).to_string())
+            } else {
+                events_response()
+            }
+        }
+        (Method::Post, "/rpc") => {
+            if !is_loopback(request.remote_addr().copied()) && !request_token_matches(request)
+            {
+                response_json(401, json!({ "error": "rpc_token_required" }).to_string())
+            } else if !request_token_matches(request) {
+                response_json(401, json!({ "error": "rpc_token_required" }).to_string())
+            } else {
+                match read_body(request)
+                    .and_then(|body| handle_json_rpc_body(&body, service_addr))
+                {
+                    Ok(body) => response_json(200, body),
+                    Err(err) => response_json(400, json!({ "error": err }).to_string()),
+                }
+            }
+        }
+        _ => response_json(404, json!({ "error": "not_found" }).to_string()),
+    }
 }
 
 pub fn start_server(addr: &str) -> Result<(), String> {
@@ -5155,14 +5171,60 @@ pub fn start_server(addr: &str) -> Result<(), String> {
 
     let service_addr = addr.to_string();
 
-    // tiny_http 顺序处理请求，每个请求在独立线程中处理
-    // 避免 async runtime 的并发阻塞问题
+    // === 有界线程池 + 背压（参考 Codex-Manager backend_runtime.rs）===
+    let cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    let worker_count = (cpus * 4).clamp(8, 16);
+    let queue_size = worker_count * 4; // 背压队列大小
+
+    let (tx, rx) = crossbeam_channel::bounded::<(Request, String)>(queue_size);
+
+    // 启动固定数量的 worker 线程
+    for worker_id in 0..worker_count {
+        let rx = rx.clone();
+        thread::Builder::new()
+            .name(format!("rpc-worker-{worker_id}"))
+            .spawn(move || {
+                for (request, addr) in rx.iter() {
+                    handle_http_request_safe(request, &addr);
+                }
+            })
+            .map_err(|err| format!("spawn worker {worker_id} failed: {err}"))?;
+    }
+    println!("cockpit-service worker pool: {worker_count} threads, queue capacity: {queue_size}");
+
+    // 主循环：接受请求并分发到线程池
     for request in server.incoming_requests() {
         let addr = service_addr.clone();
-        // 使用独立 OS 线程处理每个请求，避免阻塞 tiny_http 接受循环
-        thread::spawn(move || {
-            handle_http_request(request, &addr);
-        });
+
+        // /health 绕过队列直接响应
+        if request.method() == &Method::Get && request.url() == "/health" {
+            let _ = request.respond(response_json(200, json!({ "ok": true }).to_string()));
+            continue;
+        }
+
+        // /oauth-callback 绕过队列直接响应
+        if request.method() == &Method::Get && request.url().starts_with("/oauth-callback") {
+            let url = request.url().to_string();
+            let _ = request.respond(antigravity_oauth_callback_response(&url));
+            continue;
+        }
+
+        // 尝试发送到队列，超时则返回 503
+        match tx.send_timeout((request, addr), std::time::Duration::from_millis(200)) {
+            Ok(()) => {}
+            Err(crossbeam_channel::SendTimeoutError::Timeout((request, _))) => {
+                log::warn!("request queue full, returning 503");
+                let _ = request.respond(response_json(
+                    503,
+                    json!({ "error": "server_busy", "message": "too many concurrent requests" }).to_string(),
+                ));
+            }
+            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
+                break; // worker 线程全部退出
+            }
+        }
     }
     Ok(())
 }

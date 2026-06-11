@@ -851,6 +851,7 @@ dependencies = [
  "axum",
  "chrono",
  "cockpit-core",
+ "crossbeam-channel",
  "dirs 5.0.1",
  "log",
  "reqwest 0.12.28",

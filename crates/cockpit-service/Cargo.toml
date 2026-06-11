@@ -20,3 +20,4 @@ reqwest.workspace = true
 toml_edit = "0.20"
 urlencoding = "2.1"
 log = "0.4"
+crossbeam-channel = "0.5"
